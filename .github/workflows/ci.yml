@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    uses: tesserix/tesserix-workflows/.github/workflows/go-ci.yml@v2.1.0
+    with:
+      go_version: "1.26.x"
+      coverage_min_lines: 10
+
+  containers:
+    uses: tesserix/tesserix-workflows/.github/workflows/container-ci.yml@v2.1.0
+    with:
+      images: >-
+        {"include":[{"name":"devai-sandbox-operator","context":".","dockerfile":"Dockerfile","target":"operator","source_root":".","build_args":"","requires_application_build_secret":false,"trivy_ignore_file":"","smoke_port":0,"smoke_path":"/"},{"name":"devai-sandbox-sync","context":".","dockerfile":"Dockerfile","target":"sync","source_root":".","build_args":"","requires_application_build_secret":false,"trivy_ignore_file":"","smoke_port":0,"smoke_path":"/"}]}

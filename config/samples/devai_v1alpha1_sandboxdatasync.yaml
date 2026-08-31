@@ -1,0 +1,20 @@
+apiVersion: devai.tesserix.io/v1alpha1
+kind: SandboxDataSync
+metadata:
+  name: billing-evals
+  namespace: devai
+spec:
+  schedule: "0 2 * * *"
+  source:
+    secretRef: {name: billing-readonly, key: url}
+  target:
+    secretRef: {name: billing-sandbox, key: url}
+  anonymizationSaltSecretRef: {name: billing-anonymization, key: salt}
+  tables:
+    - source: public.customers
+      target: public.customers
+      columns:
+        - {name: id, transform: preserve}
+        - {name: email, transform: email}
+        - {name: full_name, transform: name}
+        - {name: external_id, transform: hash}
