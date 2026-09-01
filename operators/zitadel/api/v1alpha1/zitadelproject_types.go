@@ -11,6 +11,26 @@ var GroupVersion = schema.GroupVersion{Group: "identity.tesserix.app", Version: 
 type ZitadelProjectSpec struct {
 	DisplayName  string `json:"displayName"`
 	Organization string `json:"organization"`
+	// Access controls who may authenticate to this project's applications.
+	// Absent means public: any signed-in org user gets tokens.
+	Access *ZitadelProjectAccess `json:"access,omitempty"`
+}
+
+// ZitadelProjectAccess declares the product's audience. Restricted projects
+// turn on Zitadel's projectRoleCheck, so only users holding a role grant in
+// the project can authenticate; the members list is reconciled to exactly
+// those grants.
+type ZitadelProjectAccess struct {
+	// Mode is "public" or "restricted".
+	Mode string `json:"mode"`
+	// Members are the only users allowed to sign in when Mode is restricted.
+	Members []ZitadelProjectMember `json:"members,omitempty"`
+}
+
+type ZitadelProjectMember struct {
+	Email string `json:"email"`
+	// Roles the member is granted; defaults to ["member"].
+	Roles []string `json:"roles,omitempty"`
 }
 
 type ZitadelProjectStatus struct {
@@ -74,6 +94,13 @@ func (in *ZitadelProject) DeepCopy() *ZitadelProject {
 	}
 	out := *in
 	out.ObjectMeta = *in.ObjectMeta.DeepCopy()
+	if in.Spec.Access != nil {
+		access := ZitadelProjectAccess{Mode: in.Spec.Access.Mode}
+		for _, member := range in.Spec.Access.Members {
+			access.Members = append(access.Members, ZitadelProjectMember{Email: member.Email, Roles: append([]string(nil), member.Roles...)})
+		}
+		out.Spec.Access = &access
+	}
 	out.Status.Conditions = append([]metav1.Condition(nil), in.Status.Conditions...)
 	return &out
 }
