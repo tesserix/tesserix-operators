@@ -23,9 +23,19 @@ type ProjectInput struct {
 }
 
 type Application struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	ClientID string `json:"clientId"`
+	ID         string     `json:"id"`
+	Name       string     `json:"name"`
+	ClientID   string     `json:"clientId"`
+	OIDCConfig OIDCConfig `json:"oidcConfig"`
+}
+
+// OIDCConfig carries the subset of the remote OIDC configuration the operator
+// manages for drift detection.
+type OIDCConfig struct {
+	// IDTokenUserinfoAssertion makes Zitadel embed userinfo (email, profile)
+	// in the id_token. The auth BFF requires it: both the web callback and the
+	// mobile auto-login read the email claim straight from the id_token.
+	IDTokenUserinfoAssertion bool `json:"idTokenUserinfoAssertion"`
 }
 
 type ApplicationInput struct {
@@ -199,6 +209,9 @@ func (c *Client) CreateApplication(ctx context.Context, organization, projectID 
 		"authMethodType":         "OIDC_AUTH_METHOD_TYPE_NONE",
 		"version":                "OIDC_VERSION_1_0",
 		"accessTokenType":        "OIDC_TOKEN_TYPE_JWT",
+		// Without this Zitadel omits email/profile from the id_token and every
+		// BFF sign-in fails on the user upsert (email is a required field).
+		"idTokenUserinfoAssertion": true,
 	}
 	response := struct {
 		AppID    string `json:"appId"`
@@ -212,6 +225,29 @@ func (c *Client) CreateApplication(ctx context.Context, organization, projectID 
 		return Application{}, errors.New("Zitadel create application response is missing an identifier")
 	}
 	return Application{ID: response.AppID, ClientID: response.ClientID, Name: input.DisplayName}, nil
+}
+
+// UpdateOIDCConfig replaces the OIDC configuration of an existing application
+// with the desired one. Used to heal applications created by operator builds
+// that predate idTokenUserinfoAssertion; call it only when drift is detected —
+// Zitadel rejects a no-op update with an error.
+func (c *Client) UpdateOIDCConfig(ctx context.Context, organization, projectID, appID string, input ApplicationInput) error {
+	organizationID, err := c.organizationID(ctx, organization)
+	if err != nil {
+		return err
+	}
+	request := map[string]any{
+		"redirectUris":             input.RedirectURIs,
+		"postLogoutRedirectUris":   input.PostLogoutRedirectURIs,
+		"responseTypes":            []string{"OIDC_RESPONSE_TYPE_CODE"},
+		"grantTypes":               []string{"OIDC_GRANT_TYPE_AUTHORIZATION_CODE"},
+		"appType":                  oidcAppType(input.AppType),
+		"authMethodType":           "OIDC_AUTH_METHOD_TYPE_NONE",
+		"accessTokenType":          "OIDC_TOKEN_TYPE_JWT",
+		"idTokenUserinfoAssertion": true,
+	}
+	path := "/management/v1/projects/" + url.PathEscape(projectID) + "/apps/" + url.PathEscape(appID) + "/oidc_config"
+	return c.request(ctx, http.MethodPut, path, organizationID, request, nil)
 }
 
 func oidcAppType(value string) string {

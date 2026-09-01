@@ -106,10 +106,75 @@ func TestReconcile_rejects_insecure_user_agent_redirect_before_remote_call(t *te
 	}
 }
 
+func TestReconcile_heals_adopted_application_missing_userinfo_assertion(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	if err := identityv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	project := &identityv1alpha1.ZitadelProject{ObjectMeta: metav1.ObjectMeta{Name: "homechef", Namespace: "identity"}, Status: identityv1alpha1.ZitadelProjectStatus{ProjectID: "project-123"}}
+	claim := &identityv1alpha1.ZitadelApplication{
+		ObjectMeta: metav1.ObjectMeta{Name: "homechef-ios", Namespace: "identity"},
+		Spec: identityv1alpha1.ZitadelApplicationSpec{
+			ProjectRef:      identityv1alpha1.ZitadelProjectReference{Name: "homechef"},
+			DisplayName:     "HomeChef iOS",
+			ApplicationType: "native",
+			RedirectURIs:    []string{"com.homechef.app:/oauth/callback"},
+		},
+	}
+	remote := &fakeApplications{existing: zitadelapplication.Application{ID: "app-123", ClientID: "client-123", Name: "HomeChef iOS"}, existingFound: true}
+	client := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(project, claim).WithObjects(project, claim).Build()
+	reconciler := zitadelapplication.NewReconciler(client, remote)
+
+	if err := reconciler.Reconcile(context.Background(), types.NamespacedName{Namespace: claim.Namespace, Name: claim.Name}); err != nil {
+		t.Fatal(err)
+	}
+	if remote.createCalls != 0 || remote.updateCalls != 1 {
+		t.Fatalf("create calls = %d, update calls = %d, want 0 and 1", remote.createCalls, remote.updateCalls)
+	}
+	if got := remote.updateInput.RedirectURIs; len(got) != 1 || got[0] != "com.homechef.app:/oauth/callback" {
+		t.Fatalf("update input redirect uris = %#v", got)
+	}
+}
+
+func TestReconcile_leaves_adopted_application_with_userinfo_assertion_untouched(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	if err := identityv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	project := &identityv1alpha1.ZitadelProject{ObjectMeta: metav1.ObjectMeta{Name: "homechef", Namespace: "identity"}, Status: identityv1alpha1.ZitadelProjectStatus{ProjectID: "project-123"}}
+	claim := &identityv1alpha1.ZitadelApplication{
+		ObjectMeta: metav1.ObjectMeta{Name: "homechef-ios", Namespace: "identity"},
+		Spec: identityv1alpha1.ZitadelApplicationSpec{
+			ProjectRef:      identityv1alpha1.ZitadelProjectReference{Name: "homechef"},
+			DisplayName:     "HomeChef iOS",
+			ApplicationType: "native",
+			RedirectURIs:    []string{"com.homechef.app:/oauth/callback"},
+		},
+	}
+	remote := &fakeApplications{existing: zitadelapplication.Application{ID: "app-123", ClientID: "client-123", Name: "HomeChef iOS", OIDCConfig: zitadelapplication.OIDCConfig{IDTokenUserinfoAssertion: true}}, existingFound: true}
+	client := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(project, claim).WithObjects(project, claim).Build()
+	reconciler := zitadelapplication.NewReconciler(client, remote)
+
+	if err := reconciler.Reconcile(context.Background(), types.NamespacedName{Namespace: claim.Namespace, Name: claim.Name}); err != nil {
+		t.Fatal(err)
+	}
+	if remote.createCalls != 0 || remote.updateCalls != 0 {
+		t.Fatalf("create calls = %d, update calls = %d, want 0 and 0", remote.createCalls, remote.updateCalls)
+	}
+}
+
 type fakeApplications struct {
-	created     zitadelapplication.Application
-	input       zitadelapplication.ApplicationInput
-	createCalls int
+	created       zitadelapplication.Application
+	input         zitadelapplication.ApplicationInput
+	createCalls   int
+	existing      zitadelapplication.Application
+	existingFound bool
+	updateCalls   int
+	updateInput   zitadelapplication.ApplicationInput
 }
 
 func (f *fakeApplications) FindApplicationByID(context.Context, string, string, string) (zitadelapplication.Application, bool, error) {
@@ -117,7 +182,13 @@ func (f *fakeApplications) FindApplicationByID(context.Context, string, string, 
 }
 
 func (f *fakeApplications) FindApplicationByName(context.Context, string, string, string) (zitadelapplication.Application, bool, error) {
-	return zitadelapplication.Application{}, false, nil
+	return f.existing, f.existingFound, nil
+}
+
+func (f *fakeApplications) UpdateOIDCConfig(_ context.Context, _ string, _ string, _ string, input zitadelapplication.ApplicationInput) error {
+	f.updateCalls++
+	f.updateInput = input
+	return nil
 }
 
 func (f *fakeApplications) CreateApplication(_ context.Context, _ string, _ string, input zitadelapplication.ApplicationInput) (zitadelapplication.Application, error) {
