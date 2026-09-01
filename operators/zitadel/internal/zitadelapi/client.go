@@ -234,7 +234,7 @@ func (c *Client) organizationID(ctx context.Context, name string) (string, error
 			Name string `json:"name"`
 		} `json:"result"`
 	}{}
-	if err := c.request(ctx, http.MethodPost, "/management/v1/orgs/_search", "", request, &response); err != nil {
+	if err := c.request(ctx, http.MethodPost, "/v2/organizations/_search", "", request, &response); err != nil {
 		return "", fmt.Errorf("lookup Zitadel organization: %w", err)
 	}
 	if len(response.Result) == 0 {
