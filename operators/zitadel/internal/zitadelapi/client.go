@@ -16,6 +16,16 @@ import (
 type Project struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
+	// ProjectRoleCheck mirrors Zitadel's flag: when true, only users holding
+	// a role grant in the project can authenticate to its applications.
+	ProjectRoleCheck bool `json:"projectRoleCheck"`
+}
+
+// UserGrant is a user's role membership in a project.
+type UserGrant struct {
+	ID       string   `json:"id"`
+	UserID   string   `json:"userId"`
+	RoleKeys []string `json:"roleKeys"`
 }
 
 type ProjectInput struct {
@@ -340,4 +350,123 @@ type statusError struct {
 
 func (e *statusError) Error() string {
 	return fmt.Sprintf("Zitadel management API returned HTTP %d", e.code)
+}
+
+// UpdateProject sets the project's authentication gate. Callers must drift-guard:
+// Zitadel rejects updates that change nothing.
+func (c *Client) UpdateProject(ctx context.Context, organization, projectID, name string, roleCheck bool) error {
+	organizationID, err := c.organizationID(ctx, organization)
+	if err != nil {
+		return err
+	}
+	request := map[string]any{
+		"name":                 name,
+		"projectRoleAssertion": true,
+		"projectRoleCheck":     roleCheck,
+		"hasProjectCheck":      false,
+	}
+	return c.request(ctx, http.MethodPut, "/management/v1/projects/"+url.PathEscape(projectID), organizationID, request, nil)
+}
+
+func (c *Client) ListRoles(ctx context.Context, organization, projectID string) ([]string, error) {
+	organizationID, err := c.organizationID(ctx, organization)
+	if err != nil {
+		return nil, err
+	}
+	response := struct {
+		Result []struct {
+			Key string `json:"key"`
+		} `json:"result"`
+	}{}
+	if err := c.request(ctx, http.MethodPost, "/management/v1/projects/"+url.PathEscape(projectID)+"/roles/_search", organizationID, map[string]any{"query": map[string]any{"limit": 100}}, &response); err != nil {
+		return nil, err
+	}
+	keys := make([]string, 0, len(response.Result))
+	for _, role := range response.Result {
+		keys = append(keys, role.Key)
+	}
+	return keys, nil
+}
+
+func (c *Client) AddRole(ctx context.Context, organization, projectID, key string) error {
+	organizationID, err := c.organizationID(ctx, organization)
+	if err != nil {
+		return err
+	}
+	request := map[string]any{"roleKey": key, "displayName": key}
+	return c.request(ctx, http.MethodPost, "/management/v1/projects/"+url.PathEscape(projectID)+"/roles", organizationID, request, nil)
+}
+
+func (c *Client) FindUserByEmail(ctx context.Context, organization, email string) (string, bool, error) {
+	organizationID, err := c.organizationID(ctx, organization)
+	if err != nil {
+		return "", false, err
+	}
+	request := map[string]any{
+		"query": map[string]any{"limit": 2},
+		"queries": []map[string]any{{
+			"emailQuery": map[string]string{"emailAddress": email, "method": "TEXT_QUERY_METHOD_EQUALS_IGNORE_CASE"},
+		}},
+	}
+	response := struct {
+		Result []struct {
+			ID string `json:"id"`
+		} `json:"result"`
+	}{}
+	if err := c.request(ctx, http.MethodPost, "/management/v1/users/_search", organizationID, request, &response); err != nil {
+		return "", false, err
+	}
+	if len(response.Result) == 0 {
+		return "", false, nil
+	}
+	if len(response.Result) > 1 {
+		return "", false, fmt.Errorf("multiple Zitadel users with email %q", email)
+	}
+	return response.Result[0].ID, true, nil
+}
+
+func (c *Client) ListGrants(ctx context.Context, organization, projectID string) ([]UserGrant, error) {
+	organizationID, err := c.organizationID(ctx, organization)
+	if err != nil {
+		return nil, err
+	}
+	request := map[string]any{
+		"query": map[string]any{"limit": 200},
+		"queries": []map[string]any{{
+			"projectIdQuery": map[string]string{"projectId": projectID},
+		}},
+	}
+	response := struct {
+		Result []UserGrant `json:"result"`
+	}{}
+	if err := c.request(ctx, http.MethodPost, "/management/v1/users/grants/_search", organizationID, request, &response); err != nil {
+		return nil, err
+	}
+	return response.Result, nil
+}
+
+func (c *Client) AddGrant(ctx context.Context, organization, userID, projectID string, roles []string) error {
+	organizationID, err := c.organizationID(ctx, organization)
+	if err != nil {
+		return err
+	}
+	request := map[string]any{"projectId": projectID, "roleKeys": roles}
+	return c.request(ctx, http.MethodPost, "/management/v1/users/"+url.PathEscape(userID)+"/grants", organizationID, request, nil)
+}
+
+func (c *Client) UpdateGrant(ctx context.Context, organization, userID, grantID string, roles []string) error {
+	organizationID, err := c.organizationID(ctx, organization)
+	if err != nil {
+		return err
+	}
+	request := map[string]any{"roleKeys": roles}
+	return c.request(ctx, http.MethodPut, "/management/v1/users/"+url.PathEscape(userID)+"/grants/"+url.PathEscape(grantID), organizationID, request, nil)
+}
+
+func (c *Client) RemoveGrant(ctx context.Context, organization, userID, grantID string) error {
+	organizationID, err := c.organizationID(ctx, organization)
+	if err != nil {
+		return err
+	}
+	return c.request(ctx, http.MethodDelete, "/management/v1/users/"+url.PathEscape(userID)+"/grants/"+url.PathEscape(grantID), organizationID, nil, nil)
 }
