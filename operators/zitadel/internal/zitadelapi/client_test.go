@@ -97,6 +97,7 @@ func TestClient_creates_native_public_application_with_PKCE_safe_configuration(t
 				`"authMethodType":"OIDC_AUTH_METHOD_TYPE_NONE"`,
 				`"responseTypes":["OIDC_RESPONSE_TYPE_CODE"]`,
 				`"grantTypes":["OIDC_GRANT_TYPE_AUTHORIZATION_CODE"]`,
+				`"idTokenUserinfoAssertion":true`,
 			} {
 				if !strings.Contains(string(body), want) {
 					t.Fatalf("request body = %s, missing %s", body, want)
@@ -119,5 +120,50 @@ func TestClient_creates_native_public_application_with_PKCE_safe_configuration(t
 	}
 	if app.ID != "app-123" || app.ClientID != "client-123" {
 		t.Fatalf("application = %#v", app)
+	}
+}
+
+func TestClient_update_oidc_config_replaces_configuration_with_userinfo_assertion(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v2/organizations/_search":
+			_, _ = w.Write([]byte(`{"result":[{"id":"org-123","name":"TESSERIX"}]}`))
+		case "/management/v1/projects/project-123/apps/app-123/oidc_config":
+			if r.Method != http.MethodPut {
+				t.Fatalf("method = %s", r.Method)
+			}
+			if got := r.Header.Get("X-Zitadel-Orgid"); got != "org-123" {
+				t.Fatalf("organization header = %q", got)
+			}
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, want := range []string{
+				`"idTokenUserinfoAssertion":true`,
+				`"appType":"OIDC_APP_TYPE_NATIVE"`,
+				`"authMethodType":"OIDC_AUTH_METHOD_TYPE_NONE"`,
+				`"redirectUris":["com.homechef.app:/oauth/callback"]`,
+			} {
+				if !strings.Contains(string(body), want) {
+					t.Fatalf("request body = %s, missing %s", body, want)
+				}
+			}
+			_, _ = w.Write([]byte(`{}`))
+		default:
+			t.Fatalf("request path = %s", r.URL.Path)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client, err := zitadelapi.NewClient(server.URL, "auth.tesserix.app", func() (string, error) { return "test-token", nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = client.UpdateOIDCConfig(context.Background(), "TESSERIX", "project-123", "app-123", zitadelapi.ApplicationInput{AppType: "native", RedirectURIs: []string{"com.homechef.app:/oauth/callback"}})
+	if err != nil {
+		t.Fatal(err)
 	}
 }
