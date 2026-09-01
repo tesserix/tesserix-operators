@@ -24,7 +24,19 @@ func TestClient_creates_project_with_organization_scoped_authorization(t *testin
 			t.Fatalf("authorization = %q", got)
 		}
 		switch r.URL.Path {
-		case "/management/v1/orgs/_search":
+		case "/v2/organizations/_search":
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, want := range []string{
+				`"limit":2`,
+				`"nameQuery":{"method":"TEXT_QUERY_METHOD_EQUALS","name":"TESSERIX"}`,
+			} {
+				if !strings.Contains(string(body), want) {
+					t.Fatalf("organization lookup body = %s, missing %s", body, want)
+				}
+			}
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"result":[{"id":"org-123","name":"TESSERIX"}]}`))
 			return
@@ -70,7 +82,7 @@ func TestClient_creates_native_public_application_with_PKCE_safe_configuration(t
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/management/v1/orgs/_search":
+		case "/v2/organizations/_search":
 			_, _ = w.Write([]byte(`{"result":[{"id":"org-123","name":"TESSERIX"}]}`))
 		case "/management/v1/projects/project-123/apps/oidc":
 			if got := r.Header.Get("X-Zitadel-Orgid"); got != "org-123" {
