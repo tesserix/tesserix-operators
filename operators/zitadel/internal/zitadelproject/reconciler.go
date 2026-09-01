@@ -48,15 +48,15 @@ func (r *Reconciler) Reconcile(ctx context.Context, key types.NamespacedName) er
 		return fmt.Errorf("get ZitadelProject: %w", err)
 	}
 	if err := validate(claim); err != nil {
-		return err
+		return r.recordFailure(ctx, claim, err)
 	}
 
 	project, err := r.resolve(ctx, claim)
 	if err != nil {
-		return err
+		return r.recordFailure(ctx, claim, err)
 	}
 	if project.ID == "" {
-		return errors.New("Zitadel project response has no id")
+		return r.recordFailure(ctx, claim, errors.New("Zitadel project response has no id"))
 	}
 
 	claim.Status.ProjectID = project.ID
@@ -72,6 +72,21 @@ func (r *Reconciler) Reconcile(ctx context.Context, key types.NamespacedName) er
 		return fmt.Errorf("update ZitadelProject status: %w", err)
 	}
 	return nil
+}
+
+func (r *Reconciler) recordFailure(ctx context.Context, claim *identityv1alpha1.ZitadelProject, reconcileErr error) error {
+	claim.Status.ObservedGeneration = claim.Generation
+	meta.SetStatusCondition(&claim.Status.Conditions, metav1.Condition{
+		Type:               "Ready",
+		Status:             metav1.ConditionFalse,
+		Reason:             "ReconcileFailed",
+		Message:            reconcileErr.Error(),
+		ObservedGeneration: claim.Generation,
+	})
+	if err := r.client.Status().Update(ctx, claim); err != nil {
+		return fmt.Errorf("%w; update ZitadelProject failure status: %v", reconcileErr, err)
+	}
+	return reconcileErr
 }
 
 func (r *Reconciler) resolve(ctx context.Context, claim *identityv1alpha1.ZitadelProject) (Project, error) {
