@@ -1,0 +1,5 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - identity.tesserix.app_zitadelprojects.yaml
+  - identity.tesserix.app_zitadelapplications.yaml

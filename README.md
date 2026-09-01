@@ -1,4 +1,14 @@
-# DevAI Sandbox Data Operator
+# Tesserix operators
+
+This repository contains independently deployable control-plane operators.
+
+- [DevAI Sandbox Data Operator](docs/adr/0001-sandbox-data-sync.md) creates a
+  daily anonymised sandbox sync job from a `SandboxDataSync` claim.
+- [Zitadel operator](operators/zitadel/README.md) creates product projects and
+  PKCE-only public OIDC applications from GitOps claims. It does not migrate
+  users or delete remote identity resources.
+
+## DevAI Sandbox Data Operator
 
 This Kubernetes operator creates a daily sandbox sync job from a `SandboxDataSync` claim. The worker snapshots selected PostgreSQL tables, applies deterministic transforms, and writes only to a separate sandbox database.
 

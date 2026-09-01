@@ -1,0 +1,14 @@
+apiVersion: identity.tesserix.app/v1alpha1
+kind: ZitadelApplication
+metadata:
+  name: example-mobile
+  namespace: identity-operator
+spec:
+  projectRef:
+    name: example-product
+  displayName: Example Product Mobile
+  applicationType: native
+  redirectUris:
+    - com.example.product:/oauth/callback
+  postLogoutRedirectUris:
+    - com.example.product:/oauth/logout

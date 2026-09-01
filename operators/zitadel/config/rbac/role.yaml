@@ -1,0 +1,14 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: zitadel-operator
+rules:
+  - apiGroups: [identity.tesserix.app]
+    resources: [zitadelprojects, zitadelapplications]
+    verbs: [get, list, watch]
+  - apiGroups: [identity.tesserix.app]
+    resources: [zitadelprojects/status, zitadelapplications/status]
+    verbs: [get, update, patch]
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [create, patch]

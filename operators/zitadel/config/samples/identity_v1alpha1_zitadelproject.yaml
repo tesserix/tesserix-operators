@@ -1,0 +1,8 @@
+apiVersion: identity.tesserix.app/v1alpha1
+kind: ZitadelProject
+metadata:
+  name: example-product
+  namespace: identity-operator
+spec:
+  displayName: Example Product
+  organization: TESSERIX
