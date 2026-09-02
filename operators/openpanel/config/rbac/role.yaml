@@ -1,0 +1,14 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: analytics-onboarding-operator
+rules:
+  - apiGroups: [analytics.tesserix.app]
+    resources: [analyticsonboardings]
+    verbs: [get, list, watch]
+  - apiGroups: [analytics.tesserix.app]
+    resources: [analyticsonboardings/status]
+    verbs: [get, update, patch]
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [create, patch]

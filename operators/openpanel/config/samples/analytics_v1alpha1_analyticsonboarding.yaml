@@ -1,0 +1,11 @@
+apiVersion: analytics.tesserix.app/v1alpha1
+kind: AnalyticsOnboarding
+metadata:
+  name: example
+  namespace: analytics-operator
+spec:
+  displayName: Example product
+  domain: https://example.tesserix.app
+  cors:
+    - https://example.tesserix.app
+  types: [website]
