@@ -10,7 +10,8 @@ RUN mkdir -p out \
     && go build -trimpath -ldflags='-s -w' -o out/devai-sandbox-sync ./cmd/sync \
     && go build -trimpath -ldflags='-s -w' -o out/devai-sandbox-operator ./cmd/operator \
     && go build -trimpath -ldflags='-s -w' -o out/zitadel-operator ./operators/zitadel/cmd/operator \
-    && go build -trimpath -ldflags='-s -w' -o out/analytics-onboarding-operator ./operators/openpanel/cmd/operator
+    && go build -trimpath -ldflags='-s -w' -o out/analytics-onboarding-operator ./operators/openpanel/cmd/operator \
+    && go build -trimpath -ldflags='-s -w' -o out/evals-onboarding-operator ./operators/evals/cmd/operator
 
 FROM ${RUNTIME_IMAGE} AS sync
 COPY --from=build /workspace/out/devai-sandbox-sync /devai-sandbox-sync
@@ -31,6 +32,11 @@ FROM ${RUNTIME_IMAGE} AS analytics-onboarding-operator
 COPY --from=build /workspace/out/analytics-onboarding-operator /analytics-onboarding-operator
 USER 65532:65532
 ENTRYPOINT ["/analytics-onboarding-operator"]
+
+FROM ${RUNTIME_IMAGE} AS evals-onboarding-operator
+COPY --from=build /workspace/out/evals-onboarding-operator /evals-onboarding-operator
+USER 65532:65532
+ENTRYPOINT ["/evals-onboarding-operator"]
 
 FROM postgres:14-alpine@sha256:727876d274666da0b92a445390ba093c84b8e9f8343e1c53cd4e9a7ab2d85310 AS openpanel-project-init
 RUN apk upgrade --no-cache \

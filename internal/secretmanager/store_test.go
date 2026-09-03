@@ -8,7 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/tesserix/devai-sandbox-operator/operators/openpanel/internal/secretmanager"
+	"github.com/tesserix/devai-sandbox-operator/internal/secretmanager"
 )
 
 func TestEnsureCreatesSecretAndAddsInitialVersion(t *testing.T) {

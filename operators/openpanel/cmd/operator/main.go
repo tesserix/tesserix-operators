@@ -18,10 +18,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
+	"github.com/tesserix/devai-sandbox-operator/internal/secretmanager"
 	analyticsv1alpha1 "github.com/tesserix/devai-sandbox-operator/operators/openpanel/api/v1alpha1"
 	"github.com/tesserix/devai-sandbox-operator/operators/openpanel/internal/analyticsonboarding"
 	"github.com/tesserix/devai-sandbox-operator/operators/openpanel/internal/openpanelapi"
-	"github.com/tesserix/devai-sandbox-operator/operators/openpanel/internal/secretmanager"
 )
 
 func main() {
