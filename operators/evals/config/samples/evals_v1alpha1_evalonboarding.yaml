@@ -1,0 +1,11 @@
+apiVersion: evals.tesserix.app/v1alpha1
+kind: EvalOnboarding
+metadata:
+  name: example
+  namespace: evals-operator
+spec:
+  displayName: Example product
+  datasets:
+    - name: golden
+      modality: agent
+      description: Hand-labelled golden conversations

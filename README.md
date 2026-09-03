@@ -21,3 +21,9 @@ The source database role must be `SELECT`-only. The target role must have rights
 Supported transforms are `email`, `name`, `hash`, `redact`, and `preserve`. Use `preserve` only for fields that have been classified non-sensitive. The anonymization salt makes transformed values stable within a sandbox, preserving evaluation joins without exposing original values.
 
 See [ADR 0001](docs/adr/0001-sandbox-data-sync.md) for scaling, failure, rollback, security, and cost decisions.
+
+## Evals onboarding operator
+
+`operators/evals` reconciles `EvalOnboarding` claims into a Langfuse project, a
+mirrored project key pair in Secret Manager and dataset rows in `evals_db`. See
+[its README](operators/evals/README.md).

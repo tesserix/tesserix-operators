@@ -1,0 +1,14 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: evals-onboarding-operator
+rules:
+  - apiGroups: [evals.tesserix.app]
+    resources: [evalonboardings]
+    verbs: [get, list, watch]
+  - apiGroups: [evals.tesserix.app]
+    resources: [evalonboardings/status]
+    verbs: [get, update, patch]
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [create, patch]

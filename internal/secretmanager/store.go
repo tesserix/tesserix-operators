@@ -49,7 +49,7 @@ func (s *Store) Ensure(ctx context.Context, secretID, value string) error {
 		return errors.New("refusing to store an empty Secret Manager value")
 	}
 
-	current, found, err := s.latest(ctx, secretID)
+	current, found, err := s.Latest(ctx, secretID)
 	if err != nil {
 		return err
 	}
@@ -70,7 +70,11 @@ func (s *Store) Ensure(ctx context.Context, secretID, value string) error {
 	return nil
 }
 
-func (s *Store) latest(ctx context.Context, secretID string) (string, bool, error) {
+// Latest returns the newest enabled version, or found=false when the secret does not exist.
+func (s *Store) Latest(ctx context.Context, secretID string) (string, bool, error) {
+	if !secretIDPattern.MatchString(secretID) {
+		return "", false, fmt.Errorf("invalid Secret Manager secret id %q", secretID)
+	}
 	path := fmt.Sprintf("/v1/projects/%s/secrets/%s/versions/latest:access", url.PathEscape(s.projectID), url.PathEscape(secretID))
 	var response struct {
 		Payload struct {
