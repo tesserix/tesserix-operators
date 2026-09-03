@@ -16,6 +16,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
+	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	"github.com/tesserix/devai-sandbox-operator/internal/secretmanager"
@@ -38,7 +39,10 @@ func main() {
 	flag.StringVar(&evalsDBURL, "evals-db-url", envOr("EVALS_DB_URL", "postgres://grader@global-postgres-pooler-rw.global.svc.cluster.local:5432/evals_db?sslmode=prefer"), "evals database URL without a password")
 	flag.StringVar(&evalsDBPasswordFile, "evals-db-password-file", envOr("EVALS_DB_PASSWORD_FILE", "/var/run/evals-db/password"), "path to the evals database password")
 	flag.StringVar(&watchNamespace, "watch-namespace", envOr("WATCH_NAMESPACE", "evals-operator"), "namespace containing eval onboarding claims")
+	zapOptions := zap.Options{}
+	zapOptions.BindFlags(flag.CommandLine)
 	flag.Parse()
+	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&zapOptions)))
 
 	scheme := clientgoscheme.Scheme
 	if err := evalsv1alpha1.AddToScheme(scheme); err != nil {
