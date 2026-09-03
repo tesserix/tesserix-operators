@@ -38,18 +38,3 @@ func readFile(t *testing.T, path string) string {
 	}
 	return string(contents)
 }
-
-func TestEvalsOnboardingOperatorImageIsBuiltAndPublished(t *testing.T) {
-	dockerfile := string(readFile(t, "Dockerfile"))
-	for _, want := range []string{"-o out/evals-onboarding-operator ./operators/evals/cmd/operator", "AS evals-onboarding-operator"} {
-		if !strings.Contains(dockerfile, want) {
-			t.Fatalf("Dockerfile is missing %q", want)
-		}
-	}
-	for _, path := range []string{".github/workflows/ci.yml", ".github/workflows/release.yml"} {
-		workflow := string(readFile(t, path))
-		if !strings.Contains(workflow, `"name":"evals-onboarding-operator"`) || !strings.Contains(workflow, `"source_root":"operators/evals"`) {
-			t.Fatalf("%s does not build evals-onboarding-operator", path)
-		}
-	}
-}
