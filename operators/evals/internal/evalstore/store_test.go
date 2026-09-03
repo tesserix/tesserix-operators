@@ -56,7 +56,8 @@ func TestUpsertInjectsPasswordAndWritesEveryDataset(t *testing.T) {
 
 func TestNewStoreRejectsEmbeddedPasswords(t *testing.T) {
 	t.Parallel()
-	if _, err := NewStore("postgres://grader:leak@db/evals_db", func() (string, error) { return "", nil }); err == nil {
+	embedded := (&url.URL{Scheme: "postgres", User: url.UserPassword("grader", "leak"), Host: "db", Path: "/evals_db"}).String()
+	if _, err := NewStore(embedded, func() (string, error) { return "", nil }); err == nil {
 		t.Fatal("expected an error for an embedded password")
 	}
 	if _, err := NewStore("mysql://grader@db/evals_db", func() (string, error) { return "", nil }); err == nil {
