@@ -31,3 +31,9 @@ FROM ${RUNTIME_IMAGE} AS analytics-onboarding-operator
 COPY --from=build /workspace/out/analytics-onboarding-operator /analytics-onboarding-operator
 USER 65532:65532
 ENTRYPOINT ["/analytics-onboarding-operator"]
+
+FROM postgres:14-alpine@sha256:727876d274666da0b92a445390ba093c84b8e9f8343e1c53cd4e9a7ab2d85310 AS openpanel-project-init
+RUN apk upgrade --no-cache \
+    && apk add --no-cache argon2 nodejs kubectl \
+    && rm -f /usr/local/bin/gosu
+USER 65532:65532
