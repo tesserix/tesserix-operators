@@ -76,6 +76,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, key types.NamespacedName) er
 
 func (r *Reconciler) resolve(ctx context.Context, claim *identityv1alpha1.ZitadelApplication, project *identityv1alpha1.ZitadelProject) (Application, error) {
 	input := ApplicationInput{DisplayName: claim.Spec.DisplayName, AppType: claim.Spec.ApplicationType, AuthMethod: "none", ResponseType: "code", GrantType: "authorization_code", RedirectURIs: claim.Spec.RedirectURIs, PostLogoutRedirectURIs: claim.Spec.PostLogoutRedirectURIs}
+	input.RefreshToken = claim.Spec.RefreshToken
 	if claim.Status.AppID != "" {
 		app, found, err := r.apps.FindApplicationByID(ctx, project.Spec.Organization, project.Status.ProjectID, claim.Status.AppID)
 		if err != nil {
@@ -101,7 +102,7 @@ func (r *Reconciler) resolve(ctx context.Context, claim *identityv1alpha1.Zitade
 // auth BFF then rejects every sign-in at the user upsert (email is required).
 // Guarded on drift because Zitadel rejects a no-change update.
 func (r *Reconciler) ensureConfig(ctx context.Context, project *identityv1alpha1.ZitadelProject, app Application, input ApplicationInput) (Application, error) {
-	if app.OIDCConfig.IDTokenUserinfoAssertion {
+	if app.OIDCConfig.IDTokenUserinfoAssertion && (input.RefreshToken == nil || app.OIDCConfig.Matches(input)) {
 		return app, nil
 	}
 	if err := r.apps.UpdateOIDCConfig(ctx, project.Spec.Organization, project.Status.ProjectID, app.ID, input); err != nil {

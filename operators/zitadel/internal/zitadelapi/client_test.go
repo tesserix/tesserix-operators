@@ -2,14 +2,89 @@ package zitadelapi_test
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/tesserix/devai-sandbox-operator/operators/zitadel/internal/zitadelapi"
 )
+
+func TestClient_refresh_grant_requires_explicit_opt_in(t *testing.T) {
+	yes, no := true, false
+	for _, tc := range []struct {
+		name    string
+		enabled *bool
+		want    []string
+	}{
+		{"legacy", nil, []string{"OIDC_GRANT_TYPE_AUTHORIZATION_CODE"}},
+		{"disabled", &no, []string{"OIDC_GRANT_TYPE_AUTHORIZATION_CODE"}},
+		{"enabled", &yes, []string{"OIDC_GRANT_TYPE_AUTHORIZATION_CODE", "OIDC_GRANT_TYPE_REFRESH_TOKEN"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/v2/organizations/_search" {
+					_, _ = w.Write([]byte(`{"result":[{"id":"org-123","name":"TESSERIX"}]}`))
+					return
+				}
+				var body struct {
+					GrantTypes []string `json:"grantTypes"`
+					AuthMethod string   `json:"authMethodType"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Error(err)
+					return
+				}
+				if !reflect.DeepEqual(body.GrantTypes, tc.want) || body.AuthMethod != "OIDC_AUTH_METHOD_TYPE_NONE" {
+					t.Errorf("grants=%v auth=%s; want %v and public PKCE", body.GrantTypes, body.AuthMethod, tc.want)
+				}
+				_, _ = w.Write([]byte(`{"appId":"app-123","clientId":"client-123"}`))
+			}))
+			t.Cleanup(server.Close)
+			c, err := zitadelapi.NewClient(server.URL, "auth.tesserix.app", func() (string, error) { return "test-token", nil })
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = c.CreateApplication(t.Context(), "TESSERIX", "project-123", zitadelapi.ApplicationInput{AppType: "native", DisplayName: "Roamie", RefreshToken: tc.enabled})
+			if err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestClient_adopts_client_id_from_remote_oidc_configuration(t *testing.T) {
+	t.Parallel()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v2/organizations/_search":
+			_, _ = w.Write([]byte(`{"result":[{"id":"org-123","name":"TESSERIX"}]}`))
+		case "/management/v1/projects/project-123/apps/_search":
+			_, _ = w.Write([]byte(`{"result":[{"id":"app-123","name":"Roamie iOS","oidcConfig":{"clientId":"client-123","idTokenUserinfoAssertion":true}}]}`))
+		case "/management/v1/projects/project-123/apps/app-123":
+			_, _ = w.Write([]byte(`{"app":{"id":"app-123","name":"Roamie iOS","oidcConfig":{"clientId":"client-123","idTokenUserinfoAssertion":true}}}`))
+		default:
+			t.Errorf("unexpected path %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	c, err := zitadelapi.NewClient(server.URL, "auth.tesserix.app", func() (string, error) { return "test-token", nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName, found, err := c.FindApplicationByName(t.Context(), "TESSERIX", "project-123", "Roamie iOS")
+	if err != nil || !found || byName.ClientID != "client-123" {
+		t.Fatalf("adoption by name: client id=%q found=%v err=%v", byName.ClientID, found, err)
+	}
+	byID, found, err := c.FindApplicationByID(t.Context(), "TESSERIX", "project-123", "app-123")
+	if err != nil || !found || byID.ClientID != "client-123" {
+		t.Fatalf("adoption by id: client id=%q found=%v err=%v", byID.ClientID, found, err)
+	}
+}
 
 func TestClient_creates_project_with_organization_scoped_authorization(t *testing.T) {
 	t.Parallel()

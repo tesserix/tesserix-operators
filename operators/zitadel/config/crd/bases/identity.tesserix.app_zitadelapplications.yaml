@@ -41,6 +41,9 @@ spec:
                 applicationType:
                   type: string
                   enum: [native, user_agent]
+                refreshToken:
+                  type: boolean
+                  description: Explicitly manages refresh grants and the declared public OIDC configuration; omission preserves legacy reconciliation.
                 redirectUris:
                   type: array
                   minItems: 1
