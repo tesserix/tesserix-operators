@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 )
@@ -42,6 +43,14 @@ type Application struct {
 // OIDCConfig carries the subset of the remote OIDC configuration the operator
 // manages for drift detection.
 type OIDCConfig struct {
+	ClientID               string   `json:"clientId"`
+	AppType                string   `json:"appType"`
+	AuthMethodType         string   `json:"authMethodType"`
+	AccessTokenType        string   `json:"accessTokenType"`
+	RedirectURIs           []string `json:"redirectUris"`
+	PostLogoutRedirectURIs []string `json:"postLogoutRedirectUris"`
+	GrantTypes             []string `json:"grantTypes"`
+	ResponseTypes          []string `json:"responseTypes"`
 	// IDTokenUserinfoAssertion makes Zitadel embed userinfo (email, profile)
 	// in the id_token. The auth BFF requires it: both the web callback and the
 	// mobile auto-login read the email claim straight from the id_token.
@@ -49,6 +58,7 @@ type OIDCConfig struct {
 }
 
 type ApplicationInput struct {
+	RefreshToken           *bool
 	DisplayName            string
 	AppType                string
 	AuthMethod             string
@@ -175,6 +185,7 @@ func (c *Client) FindApplicationByID(ctx context.Context, organization, projectI
 		}
 		return Application{}, false, err
 	}
+	response.App.ClientID = response.App.OIDCConfig.ClientID
 	return response.App, true, nil
 }
 
@@ -200,7 +211,9 @@ func (c *Client) FindApplicationByName(ctx context.Context, organization, projec
 	if len(response.Result) > 1 {
 		return Application{}, false, fmt.Errorf("multiple Zitadel applications named %q", name)
 	}
-	return response.Result[0], true, nil
+	app := response.Result[0]
+	app.ClientID = app.OIDCConfig.ClientID
+	return app, true, nil
 }
 
 func (c *Client) CreateApplication(ctx context.Context, organization, projectID string, input ApplicationInput) (Application, error) {
@@ -214,7 +227,7 @@ func (c *Client) CreateApplication(ctx context.Context, organization, projectID 
 		"redirectUris":           input.RedirectURIs,
 		"postLogoutRedirectUris": input.PostLogoutRedirectURIs,
 		"responseTypes":          []string{"OIDC_RESPONSE_TYPE_CODE"},
-		"grantTypes":             []string{"OIDC_GRANT_TYPE_AUTHORIZATION_CODE"},
+		"grantTypes":             grantTypes(input),
 		"appType":                oidcAppType(input.AppType),
 		"authMethodType":         "OIDC_AUTH_METHOD_TYPE_NONE",
 		"version":                "OIDC_VERSION_1_0",
@@ -250,7 +263,7 @@ func (c *Client) UpdateOIDCConfig(ctx context.Context, organization, projectID, 
 		"redirectUris":             input.RedirectURIs,
 		"postLogoutRedirectUris":   input.PostLogoutRedirectURIs,
 		"responseTypes":            []string{"OIDC_RESPONSE_TYPE_CODE"},
-		"grantTypes":               []string{"OIDC_GRANT_TYPE_AUTHORIZATION_CODE"},
+		"grantTypes":               grantTypes(input),
 		"appType":                  oidcAppType(input.AppType),
 		"authMethodType":           "OIDC_AUTH_METHOD_TYPE_NONE",
 		"accessTokenType":          "OIDC_TOKEN_TYPE_JWT",
@@ -265,6 +278,28 @@ func oidcAppType(value string) string {
 		return "OIDC_APP_TYPE_NATIVE"
 	}
 	return "OIDC_APP_TYPE_USER_AGENT"
+}
+
+func grantTypes(input ApplicationInput) []string {
+	grants := []string{"OIDC_GRANT_TYPE_AUTHORIZATION_CODE"}
+	if input.RefreshToken != nil && *input.RefreshToken {
+		grants = append(grants, "OIDC_GRANT_TYPE_REFRESH_TOKEN")
+	}
+	return grants
+}
+
+func (config OIDCConfig) Matches(input ApplicationInput) bool {
+	return config.IDTokenUserinfoAssertion && config.AppType == oidcAppType(input.AppType) &&
+		config.AuthMethodType == "OIDC_AUTH_METHOD_TYPE_NONE" && config.AccessTokenType == "OIDC_TOKEN_TYPE_JWT" &&
+		sameValues(config.RedirectURIs, input.RedirectURIs) && sameValues(config.PostLogoutRedirectURIs, input.PostLogoutRedirectURIs) &&
+		sameValues(config.GrantTypes, grantTypes(input)) && sameValues(config.ResponseTypes, []string{"OIDC_RESPONSE_TYPE_CODE"})
+}
+
+func sameValues(a, b []string) bool {
+	a, b = slices.Clone(a), slices.Clone(b)
+	slices.Sort(a)
+	slices.Sort(b)
+	return slices.Equal(a, b)
 }
 
 func (c *Client) organizationID(ctx context.Context, name string) (string, error) {

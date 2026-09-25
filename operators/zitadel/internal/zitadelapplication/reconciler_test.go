@@ -2,6 +2,7 @@ package zitadelapplication_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -61,6 +62,40 @@ func TestReconcile_creates_public_native_application_and_never_persists_secret(t
 	}
 	if len(stored.Status.Conditions) != 1 || stored.Status.Conditions[0].Status != metav1.ConditionTrue {
 		t.Fatalf("conditions = %#v", stored.Status.Conditions)
+	}
+}
+
+func TestReconcile_manages_explicit_refresh_and_redirect_drift(t *testing.T) {
+	for _, changed := range []bool{false, true} {
+		t.Run(fmt.Sprint(changed), func(t *testing.T) {
+			scheme := runtime.NewScheme()
+			if err := identityv1alpha1.AddToScheme(scheme); err != nil {
+				t.Fatal(err)
+			}
+			yes := true
+			project := &identityv1alpha1.ZitadelProject{ObjectMeta: metav1.ObjectMeta{Name: "roamie", Namespace: "identity"}, Status: identityv1alpha1.ZitadelProjectStatus{ProjectID: "p"}}
+			claim := &identityv1alpha1.ZitadelApplication{ObjectMeta: metav1.ObjectMeta{Name: "roamie-ios", Namespace: "identity"}, Spec: identityv1alpha1.ZitadelApplicationSpec{ProjectRef: identityv1alpha1.ZitadelProjectReference{Name: "roamie"}, DisplayName: "Roamie iOS", ApplicationType: "native", RefreshToken: &yes, RedirectURIs: []string{"roamie:/auth/callback"}}}
+			config := zitadelapi.OIDCConfig{ClientID: "c", IDTokenUserinfoAssertion: true, AppType: "OIDC_APP_TYPE_NATIVE", AuthMethodType: "OIDC_AUTH_METHOD_TYPE_NONE", AccessTokenType: "OIDC_TOKEN_TYPE_JWT", RedirectURIs: []string{"roamie:/auth/callback"}, GrantTypes: []string{"OIDC_GRANT_TYPE_AUTHORIZATION_CODE", "OIDC_GRANT_TYPE_REFRESH_TOKEN"}, ResponseTypes: []string{"OIDC_RESPONSE_TYPE_CODE"}}
+			if changed {
+				config.RedirectURIs = []string{"roamie:/old"}
+				config.GrantTypes = []string{"OIDC_GRANT_TYPE_AUTHORIZATION_CODE"}
+			}
+			remote := &fakeApplications{existing: zitadelapi.Application{ID: "a", ClientID: "c", OIDCConfig: config}, existingFound: true}
+			client := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(project, claim).WithObjects(project, claim).Build()
+			if err := zitadelapplication.NewReconciler(client, remote).Reconcile(t.Context(), types.NamespacedName{Namespace: "identity", Name: "roamie-ios"}); err != nil {
+				t.Fatal(err)
+			}
+			want := 0
+			if changed {
+				want = 1
+			}
+			if remote.updateCalls != want {
+				t.Fatalf("updates=%d want=%d", remote.updateCalls, want)
+			}
+			if changed && (remote.updateInput.RefreshToken == nil || !*remote.updateInput.RefreshToken) {
+				t.Fatal("refresh grant was not forwarded")
+			}
+		})
 	}
 }
 

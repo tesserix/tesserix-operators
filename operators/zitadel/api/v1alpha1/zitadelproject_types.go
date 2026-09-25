@@ -57,6 +57,7 @@ type ZitadelProjectReference struct {
 }
 
 type ZitadelApplicationSpec struct {
+	RefreshToken           *bool                   `json:"refreshToken,omitempty"`
 	ProjectRef             ZitadelProjectReference `json:"projectRef"`
 	DisplayName            string                  `json:"displayName"`
 	ApplicationType        string                  `json:"applicationType"`
@@ -130,6 +131,10 @@ func (in *ZitadelApplication) DeepCopy() *ZitadelApplication {
 	}
 	out := *in
 	out.ObjectMeta = *in.ObjectMeta.DeepCopy()
+	if in.Spec.RefreshToken != nil {
+		value := *in.Spec.RefreshToken
+		out.Spec.RefreshToken = &value
+	}
 	out.Spec.RedirectURIs = append([]string(nil), in.Spec.RedirectURIs...)
 	out.Spec.PostLogoutRedirectURIs = append([]string(nil), in.Spec.PostLogoutRedirectURIs...)
 	out.Status.Conditions = append([]metav1.Condition(nil), in.Status.Conditions...)
