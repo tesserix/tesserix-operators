@@ -112,7 +112,7 @@ func (r *Reconciler) ensureAPIKey(ctx context.Context, projectID, publicName, se
 			return err
 		}
 		for _, key := range keys {
-			if key.PublicKey == mirroredPublic {
+			if key.PublicKey == strings.TrimSpace(mirroredPublic) {
 				return nil
 			}
 		}

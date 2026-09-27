@@ -194,3 +194,23 @@ func TestReconcileRetriesTransientLangfuseFailures(t *testing.T) {
 		t.Fatal("expected a not-ready condition")
 	}
 }
+
+func TestReconcileKeepsWhitespacePaddedExistingKeyWithoutRotation(t *testing.T) {
+	t.Parallel()
+	claim := newClaim("devai")
+	claim.Status.ProjectID = "devai"
+	reconciler, langfuse, secrets, datasets, _ := build(t, claim)
+	langfuse.project = langfuseapi.Project{ID: "devai", Name: "DevAI"}
+	langfuse.listed = []langfuseapi.APIKey{{ID: "k", PublicKey: "pk-lf-existing"}}
+	secrets.values = map[string]string{"prod-devai-langfuse-public-key": " pk-lf-existing\n", "prod-devai-langfuse-secret-key": "sk-lf-existing\n"}
+
+	if err := reconciler.Reconcile(context.Background(), types.NamespacedName{Namespace: claim.Namespace, Name: claim.Name}); err != nil {
+		t.Fatal(err)
+	}
+	if langfuse.recordedID != "devai" || langfuse.created != 0 || len(secrets.writes) != 0 {
+		t.Fatalf("recorded = %q, created = %d, writes = %v", langfuse.recordedID, langfuse.created, secrets.writes)
+	}
+	if datasets.calls != 1 || len(datasets.datasets) != 0 {
+		t.Fatalf("datasets = %#v", datasets)
+	}
+}
