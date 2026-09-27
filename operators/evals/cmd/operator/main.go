@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -24,10 +25,16 @@ import (
 	"github.com/tesserix/devai-sandbox-operator/operators/evals/internal/evalonboarding"
 	"github.com/tesserix/devai-sandbox-operator/operators/evals/internal/evalstore"
 	"github.com/tesserix/devai-sandbox-operator/operators/evals/internal/langfuseapi"
+	"github.com/tesserix/devai-sandbox-operator/operators/evals/internal/openbaostore"
 )
 
 func main() {
 	var langfuseURL, publicKeyFile, secretKeyFile string
+	var baoAddress, baoRole, baoProducts, baoJWTFile string
+	flag.StringVar(&baoAddress, "openbao-address", envOr("OPENBAO_ADDR", "http://openbao.openbao.svc.cluster.local:8200"), "OpenBao address")
+	flag.StringVar(&baoRole, "openbao-role", envOr("OPENBAO_ROLE", "evals-onboarding-writer"), "OpenBao Kubernetes auth role")
+	flag.StringVar(&baoProducts, "openbao-products", envOr("OPENBAO_PRODUCTS", ""), "comma-separated migrated products; all others retain GCP")
+	flag.StringVar(&baoJWTFile, "openbao-jwt-file", envOr("OPENBAO_JWT_FILE", "/var/run/secrets/kubernetes.io/serviceaccount/token"), "Kubernetes JWT file")
 	var gcpProject, secretManagerURL, secretPrefix string
 	var evalsDBURL, evalsDBPasswordFile, watchNamespace string
 	flag.StringVar(&langfuseURL, "langfuse-url", envOr("LANGFUSE_URL", "http://langfuse-web.observability.svc.cluster.local:3000"), "Langfuse base URL")
@@ -76,7 +83,23 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	reconciler := evalonboarding.NewReconciler(manager.GetClient(), langfuse, secrets, datasets, secretPrefix)
+	var credentialStore evalonboarding.Secrets = secrets
+	if baoProducts != "" {
+		paths := map[string]string{}
+		for _, product := range strings.Split(baoProducts, ",") {
+			if !regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`).MatchString(product) {
+				panic("invalid OpenBao product")
+			}
+			for _, suffix := range []string{"-langfuse-public-key", "-langfuse-secret-key"} {
+				paths[secretPrefix+product+suffix] = product + "/app/" + product + suffix
+			}
+		}
+		credentialStore, err = openbaostore.New(baoAddress, baoRole, func() (string, error) { b, e := os.ReadFile(baoJWTFile); return string(b), e }, paths, secrets, &http.Client{Timeout: 10 * time.Second})
+		if err != nil {
+			panic(err)
+		}
+	}
+	reconciler := evalonboarding.NewReconciler(manager.GetClient(), langfuse, credentialStore, datasets, secretPrefix)
 	if err := manager.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		panic(err)
 	}
