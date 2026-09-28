@@ -8,17 +8,17 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
-	"golang.org/x/oauth2/google"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	"github.com/tesserix/devai-sandbox-operator/internal/secretmanager"
+	"github.com/tesserix/devai-sandbox-operator/internal/openbaostore"
 	analyticsv1alpha1 "github.com/tesserix/devai-sandbox-operator/operators/openpanel/api/v1alpha1"
 	"github.com/tesserix/devai-sandbox-operator/operators/openpanel/internal/analyticsonboarding"
 	"github.com/tesserix/devai-sandbox-operator/operators/openpanel/internal/openpanelapi"
@@ -28,16 +28,19 @@ func main() {
 	var apiURL string
 	var clientIDFile string
 	var clientSecretFile string
-	var gcpProject string
-	var secretManagerURL string
-	var secretPrefix string
+	var baoAddress, baoRole, baoProducts, baoJWTFile string
 	var watchNamespace string
 	flag.StringVar(&apiURL, "openpanel-api-url", envOr("OPENPANEL_API_URL", "http://openpanel-api.openpanel.svc.cluster.local:3333"), "OpenPanel management API URL")
 	flag.StringVar(&clientIDFile, "openpanel-client-id-file", envOr("OPENPANEL_CLIENT_ID_FILE", "/var/run/openpanel-root/client-id"), "path to the OpenPanel root client id")
 	flag.StringVar(&clientSecretFile, "openpanel-client-secret-file", envOr("OPENPANEL_CLIENT_SECRET_FILE", "/var/run/openpanel-root/client-secret"), "path to the OpenPanel root client secret")
-	flag.StringVar(&gcpProject, "gcp-project", envOr("GCP_PROJECT", "tesseracthub-480811"), "GCP project containing analytics client id secrets")
-	flag.StringVar(&secretManagerURL, "secret-manager-url", envOr("SECRET_MANAGER_URL", "https://secretmanager.googleapis.com"), "Google Secret Manager API URL")
-	flag.StringVar(&secretPrefix, "secret-prefix", envOr("SECRET_PREFIX", "prod-openpanel-"), "derived Secret Manager name prefix")
+	flag.StringVar(&baoAddress, "openbao-address", envOr("OPENBAO_ADDR", "http://openbao.openbao.svc.cluster.local:8200"), "OpenBao address")
+	flag.StringVar(&baoRole, "openbao-role", envOr("OPENBAO_ROLE", "analytics-onboarding-writer"), "OpenBao Kubernetes authentication role")
+	flag.StringVar(&baoProducts, "openbao-products", envOr("OPENBAO_PRODUCTS", "devai,langfuse"), "reviewed production products allowed to publish client IDs")
+	flag.StringVar(&baoJWTFile, "openbao-jwt-file", envOr("OPENBAO_JWT_FILE", "/var/run/secrets/kubernetes.io/serviceaccount/token"), "Kubernetes JWT file")
+	// Existing image promotions may precede the argument cutover. These never enable GCP access.
+	flag.String("gcp-project", "", "deprecated; ignored")
+	flag.String("secret-manager-url", "", "deprecated; ignored")
+	flag.String("secret-prefix", "", "deprecated; ignored")
 	flag.StringVar(&watchNamespace, "watch-namespace", envOr("WATCH_NAMESPACE", "analytics-operator"), "namespace containing analytics onboarding claims")
 	flag.Parse()
 
@@ -58,16 +61,19 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	secretHTTP, err := google.DefaultClient(context.Background(), "https://www.googleapis.com/auth/cloud-platform")
-	if err != nil {
-		panic(fmt.Errorf("create authenticated Secret Manager client: %w", err))
-	}
-	secretHTTP.Timeout = 10 * time.Second
-	secrets, err := secretmanager.NewStore(secretManagerURL, gcpProject, secretHTTP)
+	paths, err := reviewedPaths(baoProducts)
 	if err != nil {
 		panic(err)
 	}
-	reconciler := analyticsonboarding.NewReconciler(manager.GetClient(), projects, secrets, secretPrefix)
+	storePaths := make(map[string]string, len(paths))
+	for _, path := range paths {
+		storePaths[path] = path
+	}
+	secrets, err := openbaostore.New(baoAddress, baoRole, func() (string, error) { return readSmallFile(baoJWTFile) }, storePaths, nil, &http.Client{Timeout: 10 * time.Second})
+	if err != nil {
+		panic(err)
+	}
+	reconciler := analyticsonboarding.NewReconciler(manager.GetClient(), projects, secrets, paths)
 	if err := manager.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		panic(err)
 	}
@@ -119,4 +125,20 @@ func envOr(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func reviewedPaths(products string) (map[string]string, error) {
+	paths := map[string]string{}
+	pattern := regexp.MustCompile(`^[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
+	for _, item := range strings.Split(products, ",") {
+		product := strings.TrimSpace(item)
+		if !pattern.MatchString(product) {
+			return nil, errors.New("invalid reviewed OpenBao product")
+		}
+		if _, exists := paths[product]; exists {
+			return nil, errors.New("duplicate reviewed OpenBao product")
+		}
+		paths[product] = product + "/app/" + product + "-openpanel-client-id"
+	}
+	return paths, nil
 }

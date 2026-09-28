@@ -20,12 +20,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
+	"github.com/tesserix/devai-sandbox-operator/internal/openbaostore"
 	"github.com/tesserix/devai-sandbox-operator/internal/secretmanager"
 	evalsv1alpha1 "github.com/tesserix/devai-sandbox-operator/operators/evals/api/v1alpha1"
 	"github.com/tesserix/devai-sandbox-operator/operators/evals/internal/evalonboarding"
 	"github.com/tesserix/devai-sandbox-operator/operators/evals/internal/evalstore"
 	"github.com/tesserix/devai-sandbox-operator/operators/evals/internal/langfuseapi"
-	"github.com/tesserix/devai-sandbox-operator/operators/evals/internal/openbaostore"
 )
 
 func main() {
