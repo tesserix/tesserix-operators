@@ -26,7 +26,9 @@ func TestMappedSecretsNeverFallBackAndWritesUseCAS(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
 				case "/v1/auth/kubernetes/login":
-					json.NewEncoder(w).Encode(map[string]any{"auth": map[string]string{"client_token": "test-token"}})
+					if err := json.NewEncoder(w).Encode(map[string]any{"auth": map[string]string{"client_token": "test-token"}}); err != nil {
+						t.Error(err)
+					}
 				case "/v1/auth/token/revoke-self":
 					revoked++
 					w.WriteHeader(204)
@@ -37,9 +39,13 @@ func TestMappedSecretsNeverFallBackAndWritesUseCAS(t *testing.T) {
 					if r.Method == "GET" {
 						w.WriteHeader(code)
 						if code == 200 {
-							fmt.Fprint(w, `{"data":{"data":{"value":"old"},"metadata":{"version":3}}}`)
+							if _, err := fmt.Fprint(w, `{"data":{"data":{"value":"old"},"metadata":{"version":3}}}`); err != nil {
+								t.Error(err)
+							}
 						} else {
-							fmt.Fprint(w, "sensitive-upstream-error")
+							if _, err := fmt.Fprint(w, "sensitive-upstream-error"); err != nil {
+								t.Error(err)
+							}
 						}
 						return
 					}
@@ -50,7 +56,11 @@ func TestMappedSecretsNeverFallBackAndWritesUseCAS(t *testing.T) {
 						}
 						Data map[string]string
 					}
-					json.NewDecoder(r.Body).Decode(&body)
+					if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+						t.Error(err)
+						w.WriteHeader(400)
+						return
+					}
 					want := 3
 					if code == 404 {
 						want = 0
@@ -93,5 +103,71 @@ func TestRejectsUnsafePaths(t *testing.T) {
 		if _, err := New("https://bao.example", "role", func() (string, error) { return "jwt", nil }, map[string]string{"source": path}, &fallbackStore{}, http.DefaultClient); err == nil {
 			t.Fatalf("accepted %q", path)
 		}
+	}
+}
+
+func TestStrictStoreRejectsUnmappedSecretsWithoutFallback(t *testing.T) {
+	t.Parallel()
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		t.Error("unmapped secret reached OpenBao")
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(server.Close)
+	store, err := New(server.URL, "analytics-writer", func() (string, error) { return "test-jwt", nil }, map[string]string{"devai/app/devai-openpanel-client-id": "devai/app/devai-openpanel-client-id"}, nil, server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Ensure(t.Context(), "another-product", "value"); err == nil {
+		t.Fatal("unmapped write accepted")
+	}
+	if _, _, err := store.Latest(t.Context(), "another-product"); err == nil {
+		t.Fatal("unmapped read accepted")
+	}
+	if calls != 0 {
+		t.Fatalf("unexpected calls: %d", calls)
+	}
+}
+
+func TestStrictStoreSkipsIdenticalValueAndRevokesToken(t *testing.T) {
+	t.Parallel()
+	writes, revokes := 0, 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/auth/kubernetes/login":
+			if _, err := fmt.Fprint(w, `{"auth":{"client_token":"test-token"}}`); err != nil {
+				t.Error(err)
+			}
+		case "/v1/auth/token/revoke-self":
+			revokes++
+			w.WriteHeader(204)
+		case "/v1/kv/data/devai/app/devai-openpanel-client-id":
+			if r.Method != "GET" {
+				writes++
+				w.WriteHeader(500)
+				return
+			}
+			if _, err := fmt.Fprint(w, `{"data":{"data":{"value":"existing"},"metadata":{"version":4}}}`); err != nil {
+				t.Error(err)
+			}
+		default:
+			t.Error("unexpected path")
+			w.WriteHeader(500)
+		}
+	}))
+	t.Cleanup(server.Close)
+	path := "devai/app/devai-openpanel-client-id"
+	store, err := New(server.URL, "analytics-writer", func() (string, error) { return "test-jwt", nil }, map[string]string{path: path}, nil, server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := store.Ensure(t.Context(), path, "existing"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if writes != 0 || revokes != 2 {
+		t.Fatalf("writes=%d revokes=%d", writes, revokes)
 	}
 }

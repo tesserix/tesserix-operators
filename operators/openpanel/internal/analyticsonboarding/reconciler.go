@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net/url"
 	"strings"
 
@@ -26,14 +27,14 @@ type Secrets interface {
 }
 
 type Reconciler struct {
-	client       client.Client
-	projects     Projects
-	secrets      Secrets
-	secretPrefix string
+	client   client.Client
+	projects Projects
+	secrets  Secrets
+	paths    map[string]string
 }
 
-func NewReconciler(client client.Client, projects Projects, secrets Secrets, secretPrefix string) *Reconciler {
-	return &Reconciler{client: client, projects: projects, secrets: secrets, secretPrefix: secretPrefix}
+func NewReconciler(client client.Client, projects Projects, secrets Secrets, paths map[string]string) *Reconciler {
+	return &Reconciler{client: client, projects: projects, secrets: secrets, paths: maps.Clone(paths)}
 }
 
 func (r *Reconciler) Reconcile(ctx context.Context, key types.NamespacedName) error {
@@ -43,6 +44,10 @@ func (r *Reconciler) Reconcile(ctx context.Context, key types.NamespacedName) er
 			return nil
 		}
 		return fmt.Errorf("get AnalyticsOnboarding: %w", err)
+	}
+	secretName, allowed := r.paths[claim.Name]
+	if !allowed {
+		return r.recordFailure(ctx, claim, permanentError{"claim has no reviewed OpenBao destination"})
 	}
 	input, err := projectInput(claim)
 	if err != nil {
@@ -55,9 +60,8 @@ func (r *Reconciler) Reconcile(ctx context.Context, key types.NamespacedName) er
 	if result.ProjectID == "" || result.ClientID == "" {
 		return r.recordFailure(ctx, claim, errors.New("OpenPanel reconciliation returned an empty project or client id"))
 	}
-	secretName := r.secretPrefix + claim.Name + "-client-id"
 	if err := r.secrets.Ensure(ctx, secretName, result.ClientID); err != nil {
-		return r.recordFailure(ctx, claim, fmt.Errorf("reconcile client id in Secret Manager: %w", err))
+		return r.recordFailure(ctx, claim, fmt.Errorf("reconcile client id in OpenBao: %w", err))
 	}
 
 	claim.Status.ProjectID = result.ProjectID

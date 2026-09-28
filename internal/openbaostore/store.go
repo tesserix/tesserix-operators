@@ -34,8 +34,8 @@ func New(address, role string, jwt func() (string, error), paths map[string]stri
 	if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") || u.User != nil || u.RawQuery != "" || u.Fragment != "" || strings.Trim(u.Path, "/") != "" {
 		return nil, errors.New("invalid OpenBao address")
 	}
-	if role == "" || jwt == nil || fallback == nil || httpClient == nil {
-		return nil, errors.New("OpenBao role, JWT source, fallback and HTTP client required")
+	if role == "" || jwt == nil || httpClient == nil {
+		return nil, errors.New("OpenBao role, JWT source and HTTP client required")
 	}
 	copied := make(map[string]string, len(paths))
 	for name, path := range paths {
@@ -52,6 +52,9 @@ func New(address, role string, jwt func() (string, error), paths map[string]stri
 func (s *Store) Latest(ctx context.Context, name string) (string, bool, error) {
 	path, mapped := s.paths[name]
 	if !mapped {
+		if s.fallback == nil {
+			return "", false, errors.New("secret has no reviewed OpenBao mapping")
+		}
 		return s.fallback.Latest(ctx, name)
 	}
 	token, err := s.login(ctx)
@@ -66,6 +69,9 @@ func (s *Store) Latest(ctx context.Context, name string) (string, bool, error) {
 func (s *Store) Ensure(ctx context.Context, name, value string) error {
 	path, mapped := s.paths[name]
 	if !mapped {
+		if s.fallback == nil {
+			return errors.New("secret has no reviewed OpenBao mapping")
+		}
 		return s.fallback.Ensure(ctx, name, value)
 	}
 	if value == "" {
@@ -159,7 +165,8 @@ func (s *Store) request(ctx context.Context, method, path, token string, payload
 	if err != nil {
 		return 0, errors.New("OpenBao request failed")
 	}
-	defer res.Body.Close()
+	// The response is read-only; closing it cannot change the request outcome.
+	defer func() { _ = res.Body.Close() }()
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
 		return res.StatusCode, fmt.Errorf("OpenBao returned HTTP %d", res.StatusCode)
 	}
