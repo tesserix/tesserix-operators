@@ -156,7 +156,7 @@ func (in *ZitadelApplicationList) DeepCopy() *ZitadelApplicationList {
 }
 
 func AddToScheme(scheme *runtime.Scheme) error {
-	scheme.AddKnownTypes(GroupVersion, &ZitadelProject{}, &ZitadelProjectList{}, &ZitadelApplication{}, &ZitadelApplicationList{})
+	scheme.AddKnownTypes(GroupVersion, &ZitadelProject{}, &ZitadelProjectList{}, &ZitadelApplication{}, &ZitadelApplicationList{}, &ZitadelMachineUser{}, &ZitadelMachineUserList{})
 	metav1.AddToGroupVersion(scheme, GroupVersion)
 	return nil
 }
