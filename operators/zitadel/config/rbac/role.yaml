@@ -4,10 +4,10 @@ metadata:
   name: zitadel-operator
 rules:
   - apiGroups: [identity.tesserix.app]
-    resources: [zitadelprojects, zitadelapplications]
+    resources: [zitadelprojects, zitadelapplications, zitadelmachineusers]
     verbs: [get, list, watch]
   - apiGroups: [identity.tesserix.app]
-    resources: [zitadelprojects/status, zitadelapplications/status]
+    resources: [zitadelprojects/status, zitadelapplications/status, zitadelmachineusers/status]
     verbs: [get, update, patch]
   - apiGroups: [""]
     resources: [events]

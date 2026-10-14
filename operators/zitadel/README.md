@@ -23,8 +23,22 @@ small JSON request/response per operation). Reconciliation targets p99 under
 unavailable, existing applications continue authenticating; new claims remain
 not-ready and are retried.
 
-Confidential clients are intentionally not supported yet. They require an
-explicit GCP Secret Manager destination and one-time recovery design: Zitadel
+Confidential OIDC applications are intentionally not supported yet: Zitadel
 returns a client secret only at creation, so a retry after a failed handoff
-cannot safely reconstruct it. This control plane must not be used for user
+cannot safely reconstruct it.
+
+`ZitadelMachineUser` creates or adopts a service account with JWT access
+tokens and gives it one credential, a personal access token or a client secret.
+It never adopts a human user that shares the name. The credential goes only to
+OpenBao, at `<product>/app/<claim-name>`, and only for claims listed in
+`--openbao-machine-users` (`product/claim` pairs). With that flag empty the
+controller does not start. OpenBao is the recovery record for the one-time
+secret: while the path holds a value nothing is issued; when it is empty every
+existing credential is revoked and one new one is issued and published, so a
+failed handoff leaves no credential behind that anyone holds. A failed OpenBao
+read never counts as empty. Rotating means deleting the OpenBao value.
+
+The operator grants machine users no roles. A role such as user deletion is a
+separately reviewed grant, because whoever may create claims must not be able to
+mint privileged credentials. This control plane must not be used for user
 migration; it is a separate, auditable workflow.

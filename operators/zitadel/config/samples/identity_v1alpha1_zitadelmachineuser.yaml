@@ -1,0 +1,13 @@
+apiVersion: identity.tesserix.app/v1alpha1
+kind: ZitadelMachineUser
+metadata:
+  # The claim name is the OpenBao secret name. It publishes only if the
+  # operator lists it, e.g. --openbao-machine-users=example/example-eval,
+  # which maps it to example/app/example-eval.
+  name: example-eval
+  namespace: identity-operator
+spec:
+  organization: TESSERIX
+  userName: example-eval
+  displayName: Example eval
+  credential: clientSecret
