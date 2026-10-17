@@ -29,6 +29,9 @@ hospital policy alone does not strengthen authentication performed by a weaker
 home org. Enforce trusted-IdP/home-org assurance and a reviewed step-up policy
 before treating shared-user access as satisfying a hospital's MFA requirements.
 
+See the [OpenBao/API integration guide and examples](openbao-and-onboarding-integration.md)
+for writer/reader bindings, HTTP contracts and recovery checks.
+
 ## Provisioning interfaces
 
 A platform administrator uses the authenticated onboarding console at
