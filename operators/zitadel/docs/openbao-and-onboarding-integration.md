@@ -16,6 +16,13 @@ claims, JWTs, client secrets, patient data or downloaded archive records.
 | Onboarding API activating Helivanta | A different projected KSA JWT, audience `helivanta-provisioning`, exact onboarding API subject checked with TokenReview |
 | Customer browser | Product login/session and explicit tenant membership; never a machine credential, operator JWT or Kubernetes permission |
 
+The public Helivanta workload route carries its projected token as
+`X-Onboarding-Token: Bearer <projected JWT>`. The shared ingress reserves
+`Authorization` for OAuth issuers. The backend performs Kubernetes TokenReview
+and rejects dual or repeated credential headers; this header does not bypass
+authentication. Direct `Authorization` remains compatible for internal callers.
+Never expose either workload credential to a browser or include it in YAML.
+
 The machine credential's production KV v2 path is
 `kv/data/helivanta/prod/app/helivanta-onboarding-client`; its data field is `value`.
 Its OAuth client ID is `helivanta-onboarding-client` (not a secret). The private

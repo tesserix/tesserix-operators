@@ -60,6 +60,9 @@ separate `helivanta-provisioning` token. Helivanta accepts only the onboarding
 API service account and reconciles membership plus OpenFGA permissions after
 its local transaction commits. The exact HTTPS workload route bypasses browser
 session middleware; the backend still authenticates every request.
+The public Helivanta hop uses `X-Onboarding-Token` to keep the Kubernetes JWT
+separate from ingress OAuth validation. TokenReview still requires the exact
+audience and onboarding API service account; dual credential headers are denied.
 
 Only a new pending tenant may bootstrap its first clinical administrator. An
 existing tenant requires the requested human's existing `tenant_admin` membership.
