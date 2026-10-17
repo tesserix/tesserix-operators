@@ -66,7 +66,11 @@ audience and onboarding API service account; dual credential headers are denied.
 
 Only a new pending tenant may bootstrap its first clinical administrator. An
 existing tenant requires the requested human's existing `tenant_admin` membership.
-A persistent activation marker prevents a completed request from recreating a
+An append-only Helivanta audit marker is committed with the first membership,
+under the same tenant advisory lock. Replays record it only once; adoption seals
+the verified existing membership without replacing it. This marker also blocks
+bootstrap after a missed operator status update. Adoption never permits first-member
+bootstrap. The claim activation marker additionally prevents a completed request from recreating a
 revoked final membership. Dependency failures remain pending and retry forward;
 no rollback deletes an identity or removes clinical data. The controller writes
 a held receipt before reporting Ready at the current claim generation. The console
