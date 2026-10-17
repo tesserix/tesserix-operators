@@ -13,6 +13,7 @@ import (
 
 func TestOrganizationAdoptionChecksTenantBeforeAnyMutation(t *testing.T) {
 	tenant := "11111111-1111-4111-8111-111111111111"
+	reauthLifetime := fmt.Sprintf("%ds", 3600)
 	for _, valid := range []bool{false, true} {
 		t.Run(fmt.Sprint(valid), func(t *testing.T) {
 			writes := 0
@@ -36,7 +37,7 @@ func TestOrganizationAdoptionChecksTenantBeforeAnyMutation(t *testing.T) {
 					_, _ = fmt.Fprint(w, `{"result":[{"grantId":"grant","grantedOrgId":"hospital","projectId":"project","state":"PROJECT_GRANT_STATE_ACTIVE"}]}`)
 				case "/management/v1/policies/login":
 					if r.Method == "GET" {
-						_, _ = fmt.Fprint(w, `{"isDefault":true,"policy":{"allowUsernamePassword":true,"allowRegister":true,"allowExternalIdp":true,"secondFactors":["SECOND_FACTOR_TYPE_OTP"],"passwordCheckLifetime":"3600s"}}`)
+						_ = json.NewEncoder(w).Encode(map[string]any{"isDefault": true, "policy": map[string]any{"allowUsernamePassword": true, "allowRegister": true, "allowExternalIdp": true, "secondFactors": []string{"SECOND_FACTOR_TYPE_OTP"}, "passwordCheckLifetime": reauthLifetime}})
 						return
 					}
 					writes++
@@ -44,7 +45,7 @@ func TestOrganizationAdoptionChecksTenantBeforeAnyMutation(t *testing.T) {
 					if e := json.NewDecoder(r.Body).Decode(&b); e != nil {
 						t.Fatal(e)
 					}
-					if b["forceMfa"] != true || b["allowRegister"] != false || b["allowDomainDiscovery"] != false || b["forceMfaLocalOnly"] != false || b["passwordCheckLifetime"] != "3600s" {
+					if b["forceMfa"] != true || b["allowRegister"] != false || b["allowDomainDiscovery"] != false || b["forceMfaLocalOnly"] != false || b["passwordCheckLifetime"] != reauthLifetime {
 						t.Errorf("unsafe policy: %v", b)
 					}
 					_, _ = fmt.Fprint(w, `{}`)
