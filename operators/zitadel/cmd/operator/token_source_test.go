@@ -12,17 +12,20 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 )
 
 func TestMachineKeyTokenSource_exchanges_a_machine_key_without_exposing_it(t *testing.T) {
 	t.Parallel()
+	var exchanges atomic.Int32
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/.well-known/openid-configuration":
 			_, _ = w.Write([]byte(`{"issuer":"` + serverURL(r) + `","token_endpoint":"` + serverURL(r) + `/oauth/v2/token"}`))
 		case "/oauth/v2/token":
+			exchanges.Add(1)
 			body, err := io.ReadAll(r.Body)
 			if err != nil {
 				t.Fatal(err)
@@ -68,6 +71,9 @@ func TestMachineKeyTokenSource_exchanges_a_machine_key_without_exposing_it(t *te
 	}
 	if token != "test-access-token" {
 		t.Fatalf("token = %q", token)
+	}
+	if second, err := source(); err != nil || second != token || exchanges.Load() != 1 {
+		t.Fatalf("short-lived token was not reused: exchanges=%d err=%v", exchanges.Load(), err)
 	}
 }
 

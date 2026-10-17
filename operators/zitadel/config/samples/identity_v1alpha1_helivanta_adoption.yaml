@@ -1,0 +1,31 @@
+# Adoption preview only. Confirm a single configuration owner before rollout.
+# These settings match the read-only live audit of 2026-10-17.
+apiVersion: identity.tesserix.app/v1alpha1
+kind: ZitadelProject
+metadata:
+  name: helivanta
+  namespace: identity-operator
+spec:
+  displayName: helivanta
+  organization: TESSERIX
+  # Access is intentionally omitted to preserve existing users during adoption.
+---
+apiVersion: identity.tesserix.app/v1alpha1
+kind: ZitadelApplication
+metadata:
+  name: helivanta-web
+  namespace: identity-operator
+spec:
+  projectRef:
+    name: helivanta
+  displayName: helivanta-web
+  applicationType: web
+  loginBaseUri: https://helivanta.app
+  refreshToken: false
+  accessTokenType: bearer
+  idTokenUserinfoAssertion: false
+  redirectUris:
+    - https://helivanta.app/api/auth/callback
+    - https://helivanta.app/api/auth/silent-renew
+  postLogoutRedirectUris:
+    - https://helivanta.app/login

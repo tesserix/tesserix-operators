@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
+	"reflect"
+	"slices"
 	"strings"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -39,7 +42,7 @@ func NewReconciler(client client.Client, apps Applications) *Reconciler {
 	return &Reconciler{client: client, apps: apps}
 }
 
-func (r *Reconciler) Reconcile(ctx context.Context, key types.NamespacedName) error {
+func (r *Reconciler) Reconcile(ctx context.Context, key types.NamespacedName) (reconcileErr error) {
 	claim := &identityv1alpha1.ZitadelApplication{}
 	if err := r.client.Get(ctx, key, claim); err != nil {
 		if apierrors.IsNotFound(err) {
@@ -47,6 +50,21 @@ func (r *Reconciler) Reconcile(ctx context.Context, key types.NamespacedName) er
 		}
 		return fmt.Errorf("get ZitadelApplication: %w", err)
 	}
+	if !claim.DeletionTimestamp.IsZero() {
+		return nil
+	}
+	previous := claim.DeepCopy()
+	defer func() {
+		if reconcileErr != nil {
+			claim.Status.ObservedGeneration = claim.Generation
+			meta.SetStatusCondition(&claim.Status.Conditions, metav1.Condition{Type: "Ready", Status: metav1.ConditionFalse, Reason: "ReconcileFailed", Message: reconcileErr.Error(), ObservedGeneration: claim.Generation})
+		}
+		if !reflect.DeepEqual(previous.Status, claim.Status) {
+			if err := r.client.Status().Update(ctx, claim); err != nil {
+				reconcileErr = errors.Join(reconcileErr, fmt.Errorf("update ZitadelApplication status: %w", err))
+			}
+		}
+	}()
 	if err := validate(claim); err != nil {
 		return err
 	}
@@ -54,7 +72,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, key types.NamespacedName) er
 	if err := r.client.Get(ctx, types.NamespacedName{Namespace: claim.Namespace, Name: claim.Spec.ProjectRef.Name}, project); err != nil {
 		return fmt.Errorf("get referenced ZitadelProject: %w", err)
 	}
-	if project.Status.ProjectID == "" {
+	if project.Status.ProjectID == "" || project.Status.ObservedGeneration != project.Generation || !meta.IsStatusConditionTrue(project.Status.Conditions, "Ready") || !project.DeletionTimestamp.IsZero() {
 		return errors.New("referenced ZitadelProject is not ready")
 	}
 	app, err := r.resolve(ctx, claim, project)
@@ -62,21 +80,21 @@ func (r *Reconciler) Reconcile(ctx context.Context, key types.NamespacedName) er
 		return err
 	}
 	if app.ID == "" || app.ClientID == "" {
-		return errors.New("Zitadel application response is missing an identifier")
+		return errors.New("zitadel application response is missing an identifier")
 	}
 	claim.Status.AppID = app.ID
 	claim.Status.ClientID = app.ClientID
 	claim.Status.ObservedGeneration = claim.Generation
 	meta.SetStatusCondition(&claim.Status.Conditions, metav1.Condition{Type: "Ready", Status: metav1.ConditionTrue, Reason: "Reconciled", Message: "Zitadel application is reconciled", ObservedGeneration: claim.Generation})
-	if err := r.client.Status().Update(ctx, claim); err != nil {
-		return fmt.Errorf("update ZitadelApplication status: %w", err)
-	}
 	return nil
 }
 
 func (r *Reconciler) resolve(ctx context.Context, claim *identityv1alpha1.ZitadelApplication, project *identityv1alpha1.ZitadelProject) (Application, error) {
 	input := ApplicationInput{DisplayName: claim.Spec.DisplayName, AppType: claim.Spec.ApplicationType, AuthMethod: "none", ResponseType: "code", GrantType: "authorization_code", RedirectURIs: claim.Spec.RedirectURIs, PostLogoutRedirectURIs: claim.Spec.PostLogoutRedirectURIs}
 	input.RefreshToken = claim.Spec.RefreshToken
+	input.LoginBaseURI = claim.Spec.LoginBaseURI
+	input.AccessTokenType = claim.Spec.AccessTokenType
+	input.IDTokenUserinfoAssertion = claim.Spec.IDTokenUserinfoAssertion
 	if claim.Status.AppID != "" {
 		app, found, err := r.apps.FindApplicationByID(ctx, project.Spec.Organization, project.Status.ProjectID, claim.Status.AppID)
 		if err != nil {
@@ -97,30 +115,41 @@ func (r *Reconciler) resolve(ctx context.Context, claim *identityv1alpha1.Zitade
 	return r.apps.CreateApplication(ctx, project.Spec.Organization, project.Status.ProjectID, input)
 }
 
-// ensureConfig heals adopted applications that predate idTokenUserinfoAssertion.
-// Without the assertion Zitadel omits email/profile from the id_token, and the
-// auth BFF then rejects every sign-in at the user upsert (email is required).
-// Guarded on drift because Zitadel rejects a no-change update.
+// Zitadel rejects no-change updates, so compare the complete managed configuration.
 func (r *Reconciler) ensureConfig(ctx context.Context, project *identityv1alpha1.ZitadelProject, app Application, input ApplicationInput) (Application, error) {
-	if app.OIDCConfig.IDTokenUserinfoAssertion && (input.RefreshToken == nil || app.OIDCConfig.Matches(input)) {
+	if app.ClientID == "" || app.OIDCConfig.AuthMethodType != "OIDC_AUTH_METHOD_TYPE_NONE" {
+		return Application{}, errors.New("refusing to convert a confidential or non-OIDC application to a public client")
+	}
+	if input.RefreshToken == nil {
+		refresh := slices.Contains(app.OIDCConfig.GrantTypes, "OIDC_GRANT_TYPE_REFRESH_TOKEN")
+		input.RefreshToken = &refresh
+	}
+	if app.OIDCConfig.Matches(input) {
 		return app, nil
 	}
 	if err := r.apps.UpdateOIDCConfig(ctx, project.Spec.Organization, project.Status.ProjectID, app.ID, input); err != nil {
 		return Application{}, fmt.Errorf("update Zitadel application OIDC config: %w", err)
 	}
-	app.OIDCConfig.IDTokenUserinfoAssertion = true
 	return app, nil
 }
 
 func validate(claim *identityv1alpha1.ZitadelApplication) error {
+	if claim.Spec.AccessTokenType != "" && claim.Spec.AccessTokenType != "jwt" && claim.Spec.AccessTokenType != "bearer" {
+		return errors.New("spec.accessTokenType must be jwt or bearer")
+	}
 	if claim.Spec.ProjectRef.Name == "" {
 		return errors.New("spec.projectRef.name is required")
 	}
 	if claim.Spec.DisplayName == "" {
 		return errors.New("spec.displayName is required")
 	}
-	if claim.Spec.ApplicationType != "native" && claim.Spec.ApplicationType != "user_agent" {
-		return errors.New("spec.applicationType must be native or user_agent")
+	if claim.Spec.ApplicationType != "native" && claim.Spec.ApplicationType != "user_agent" && claim.Spec.ApplicationType != "web" {
+		return errors.New("spec.applicationType must be native, user_agent or web")
+	}
+	if claim.Spec.LoginBaseURI != nil && *claim.Spec.LoginBaseURI != "" {
+		if err := validateURIs([]string{*claim.Spec.LoginBaseURI}, "spec.loginBaseUri", true, "web"); err != nil {
+			return err
+		}
 	}
 	if err := validateURIs(claim.Spec.RedirectURIs, "spec.redirectUris", true, claim.Spec.ApplicationType); err != nil {
 		return err
@@ -141,7 +170,24 @@ func validateURIs(values []string, field string, required bool, applicationType 
 		if err != nil || parsed.Scheme == "" {
 			return fmt.Errorf("%s contains an invalid URI", field)
 		}
-		if applicationType == "user_agent" && (parsed.Scheme != "https" || parsed.Host == "") {
+		if parsed.User != nil || parsed.Fragment != "" || strings.ContainsAny(value, "#*\\") {
+			return fmt.Errorf("%s must not contain credentials, fragments or wildcards", field)
+		}
+		if parsed.Scheme == "https" && parsed.Hostname() == "" {
+			return fmt.Errorf("%s must include an HTTPS host", field)
+		}
+		if applicationType == "native" {
+			switch strings.ToLower(parsed.Scheme) {
+			case "javascript", "data", "file", "ftp", "vbscript", "about", "blob":
+				return fmt.Errorf("%s contains an unsafe native URI scheme", field)
+			case "http":
+				ip := net.ParseIP(parsed.Hostname())
+				if ip == nil || !ip.IsLoopback() {
+					return fmt.Errorf("%s permits HTTP only for native loopback IP callbacks", field)
+				}
+			}
+		}
+		if applicationType != "native" && (parsed.Scheme != "https" || parsed.Host == "") {
 			return fmt.Errorf("%s must use an HTTPS URI for a user_agent application", field)
 		}
 		if _, ok := seen[value]; ok {

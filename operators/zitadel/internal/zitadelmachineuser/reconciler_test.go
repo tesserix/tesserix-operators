@@ -251,3 +251,56 @@ func TestReconcile_rejects_invalid_claims(t *testing.T) {
 		})
 	}
 }
+
+func TestReconcile_unreviewed_or_unavailable_secret_path_prevents_remote_mutation(t *testing.T) {
+	c := claim(zitadelmachineuser.CredentialPAT)
+	users := &fakeUsers{}
+	secrets := &fakeSecrets{readErr: errors.New("path not reviewed")}
+	if err := zitadelmachineuser.NewReconciler(setup(t, c), users, secrets).Reconcile(t.Context(), key); err == nil {
+		t.Fatal("unreviewed path accepted")
+	}
+	if users.created != 0 {
+		t.Fatal("unreviewed machine user was created before checking its destination")
+	}
+}
+
+func TestReconcile_reviewed_claim_cannot_impersonate_another_machine_user(t *testing.T) {
+	c := claim(zitadelmachineuser.CredentialPAT)
+	c.Spec.UserName = "iam-admin"
+	users := &fakeUsers{}
+	secrets := &fakeSecrets{values: map[string]string{}}
+	if err := zitadelmachineuser.NewReconciler(setup(t, c), users, secrets).Reconcile(t.Context(), key); err == nil {
+		t.Fatal("reviewed claim impersonated another machine identity")
+	}
+	if users.created+users.updated+users.patIssues != 0 {
+		t.Fatal("impersonation reached Zitadel")
+	}
+}
+
+func TestReconcile_marks_machine_user_not_ready_when_openbao_is_unavailable(t *testing.T) {
+	claim := claim(zitadelmachineuser.CredentialPAT)
+	claim.Status = identityv1alpha1.ZitadelMachineUserStatus{UserID: "u", Conditions: []metav1.Condition{{Type: "Ready", Status: metav1.ConditionTrue, Reason: "Reconciled"}}}
+	c := setup(t, claim)
+	if err := zitadelmachineuser.NewReconciler(c, &fakeUsers{}, &fakeSecrets{readErr: errors.New("OpenBao unavailable")}).Reconcile(t.Context(), key); err == nil {
+		t.Fatal("expected unavailable store error")
+	}
+	if got := stored(t, c); len(got.Status.Conditions) != 1 || got.Status.Conditions[0].Status != metav1.ConditionFalse {
+		t.Fatalf("stale readiness: %+v", got.Status)
+	}
+}
+
+func TestReconcile_missing_previously_published_credential_never_rotates_live_identity(t *testing.T) {
+	claim := claim(zitadelmachineuser.CredentialPAT)
+	claim.Status.UserID = "user-1"
+	users := &fakeUsers{existing: &zitadelmachineuser.MachineUser{ID: "user-1", UserName: claim.Spec.UserName, Name: claim.Spec.DisplayName, AccessTokenType: zitadelapi.AccessTokenTypeJWT}}
+	secrets := &fakeSecrets{values: map[string]string{}}
+	r := zitadelmachineuser.NewReconciler(setup(t, claim), users, secrets)
+	for range 2 {
+		if err := r.Reconcile(t.Context(), key); err == nil {
+			t.Fatal("missing published credential did not require recovery")
+		}
+	}
+	if users.patIssues+users.secretIssues+users.updated+users.created != 0 {
+		t.Fatal("missing OpenBao data changed a live identity")
+	}
+}

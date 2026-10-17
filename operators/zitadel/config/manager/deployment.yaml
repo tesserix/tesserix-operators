@@ -16,14 +16,17 @@ metadata:
   namespace: identity-operator
 rules:
   - apiGroups: [identity.tesserix.app]
-    resources: [zitadelprojects, zitadelapplications]
+    resources: [zitadelprojects, zitadelapplications, zitadelmachineusers]
     verbs: [get, list, watch]
   - apiGroups: [identity.tesserix.app]
-    resources: [zitadelprojects/status, zitadelapplications/status]
+    resources: [zitadelprojects/status, zitadelapplications/status, zitadelmachineusers/status]
     verbs: [get, update, patch]
   - apiGroups: [""]
     resources: [events]
     verbs: [create, patch]
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [get, list, watch, create, update, patch]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -44,10 +47,15 @@ kind: Deployment
 metadata:
   name: zitadel-operator
   namespace: identity-operator
+  annotations:
+    argocd.argoproj.io/sync-options: ServerSideApply=false
   labels:
     app.kubernetes.io/name: zitadel-operator
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
+    rollingUpdate: null
   selector:
     matchLabels:
       app.kubernetes.io/name: zitadel-operator
@@ -59,6 +67,9 @@ spec:
       serviceAccountName: zitadel-operator
       automountServiceAccountToken: true
       securityContext:
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
         runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault

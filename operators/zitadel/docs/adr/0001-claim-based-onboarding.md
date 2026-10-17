@@ -1,5 +1,9 @@
 # ADR 0001: Claim-based Zitadel product onboarding
 
+Updates: [ADR 0002](0002-hospital-tenancy-and-login.md) extends the client types,
+access controls and secret-storage direction described here. GCP management-key
+storage is transitional; use OpenBao for new credentials.
+
 ## Context
 
 Products need repeatable onboarding into the Tesserix Zitadel organization
@@ -31,6 +35,6 @@ bad claim requires an explicit, audited remote operation.
 
 Confidential applications and existing-user migration are excluded. A client
 secret is returned only once by Zitadel, so confidential support requires an
-approved Secret Manager destination and a recoverable handoff protocol. User
+approved OpenBao destination and a recoverable handoff protocol. User
 migration must preserve product user IDs, be resumable and audited, and must
 not use email-only linking.

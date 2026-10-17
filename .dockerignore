@@ -1,0 +1,14 @@
+.git
+.agents
+.codex
+.aws
+graft
+.env
+.env.*
+**/.env
+**/.env.*
+**/*.pem
+**/*.key
+**/machine-key.json
+out
+coverage*

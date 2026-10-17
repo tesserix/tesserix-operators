@@ -36,6 +36,9 @@ spec:
                   maxLength: 200
                 organization:
                   type: string
+                  x-kubernetes-validations:
+                    - rule: self == oldSelf
+                      message: organization is immutable
                   minLength: 1
                   maxLength: 200
                 access:
@@ -48,6 +51,7 @@ spec:
                       enum:
                         - public
                         - restricted
+                        - organization
                     members:
                       type: array
                       maxItems: 100

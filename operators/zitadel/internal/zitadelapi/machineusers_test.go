@@ -65,7 +65,7 @@ func TestClient_finds_machine_user_by_name(t *testing.T) {
 		if r.URL.Path != "/management/v1/users/_search" {
 			t.Errorf("unexpected path %s", r.URL.Path)
 		}
-		_, _ = w.Write([]byte(`{"result":[{"id":"user-1","userName":"kora-eval","machine":{"name":"Kora eval","accessTokenType":"ACCESS_TOKEN_TYPE_BEARER"}}]}`))
+		_, _ = w.Write([]byte(`{"result":[{"id":"user-1","userName":"kora-eval","details":{"resourceOwner":"org-123"},"machine":{"name":"Kora eval","accessTokenType":"ACCESS_TOKEN_TYPE_BEARER"}}]}`))
 	})
 
 	user, found, err := c.FindMachineUserByName(t.Context(), "TESSERIX", "kora-eval")
@@ -117,5 +117,14 @@ func TestClient_replaces_client_secret(t *testing.T) {
 	id, secret, err := c.ReplaceClientSecret(t.Context(), "TESSERIX", "user-1")
 	if err != nil || id != "kora-eval" || secret != "s3cret" {
 		t.Fatalf("id=%q secret=%q err=%v", id, secret, err)
+	}
+}
+
+func TestClient_refuses_machine_user_owned_by_another_organization(t *testing.T) {
+	c := machineUserServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"user":{"id":"u","userName":"service","details":{"resourceOwner":"foreign-org"},"machine":{"name":"Service","accessTokenType":"ACCESS_TOKEN_TYPE_JWT"}}}`))
+	})
+	if user, found, err := c.FindMachineUserByID(t.Context(), "TESSERIX", "u"); err == nil || found || user.ID != "" {
+		t.Fatalf("foreign identity accepted: found=%v err=%v", found, err)
 	}
 }

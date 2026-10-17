@@ -29,6 +29,10 @@ spec:
               properties:
                 organization:
                   type: string
+                  maxLength: 200
+                  x-kubernetes-validations:
+                    - rule: self == oldSelf
+                      message: organization is immutable
                   minLength: 1
                 userName:
                   type: string

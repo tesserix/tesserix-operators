@@ -15,11 +15,17 @@ import (
 )
 
 type Project struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Details struct {
+		ResourceOwner string `json:"resourceOwner"`
+	} `json:"details"`
 	// ProjectRoleCheck mirrors Zitadel's flag: when true, only users holding
 	// a role grant in the project can authenticate to its applications.
-	ProjectRoleCheck bool `json:"projectRoleCheck"`
+	ProjectRoleCheck       bool   `json:"projectRoleCheck"`
+	HasProjectCheck        bool   `json:"hasProjectCheck"`
+	ProjectRoleAssertion   bool   `json:"projectRoleAssertion"`
+	PrivateLabelingSetting string `json:"privateLabelingSetting,omitempty"`
 }
 
 // UserGrant is a user's role membership in a project.
@@ -30,7 +36,9 @@ type UserGrant struct {
 }
 
 type ProjectInput struct {
-	DisplayName string
+	DisplayName       string
+	RoleCheck         bool
+	OrganizationCheck bool
 }
 
 type Application struct {
@@ -43,14 +51,22 @@ type Application struct {
 // OIDCConfig carries the subset of the remote OIDC configuration the operator
 // manages for drift detection.
 type OIDCConfig struct {
-	ClientID               string   `json:"clientId"`
-	AppType                string   `json:"appType"`
-	AuthMethodType         string   `json:"authMethodType"`
-	AccessTokenType        string   `json:"accessTokenType"`
-	RedirectURIs           []string `json:"redirectUris"`
-	PostLogoutRedirectURIs []string `json:"postLogoutRedirectUris"`
-	GrantTypes             []string `json:"grantTypes"`
-	ResponseTypes          []string `json:"responseTypes"`
+	ClientID                 string          `json:"clientId"`
+	AppType                  string          `json:"appType"`
+	AuthMethodType           string          `json:"authMethodType"`
+	AccessTokenType          string          `json:"accessTokenType"`
+	RedirectURIs             []string        `json:"redirectUris"`
+	PostLogoutRedirectURIs   []string        `json:"postLogoutRedirectUris"`
+	GrantTypes               []string        `json:"grantTypes"`
+	ResponseTypes            []string        `json:"responseTypes"`
+	LoginVersion             json.RawMessage `json:"loginVersion,omitempty"`
+	BackChannelLogoutURI     string          `json:"backChannelLogoutUri,omitempty"`
+	AdditionalOrigins        []string        `json:"additionalOrigins,omitempty"`
+	ClockSkew                string          `json:"clockSkew,omitempty"`
+	AccessTokenRoleAssertion bool            `json:"accessTokenRoleAssertion"`
+	IDTokenRoleAssertion     bool            `json:"idTokenRoleAssertion"`
+	SkipNativeAppSuccessPage bool            `json:"skipNativeAppSuccessPage"`
+	DevMode                  bool            `json:"devMode"`
 	// IDTokenUserinfoAssertion makes Zitadel embed userinfo (email, profile)
 	// in the id_token. The auth BFF requires it: both the web callback and the
 	// mobile auto-login read the email claim straight from the id_token.
@@ -58,14 +74,17 @@ type OIDCConfig struct {
 }
 
 type ApplicationInput struct {
-	RefreshToken           *bool
-	DisplayName            string
-	AppType                string
-	AuthMethod             string
-	ResponseType           string
-	GrantType              string
-	RedirectURIs           []string
-	PostLogoutRedirectURIs []string
+	AccessTokenType          string
+	IDTokenUserinfoAssertion *bool
+	LoginBaseURI             *string
+	RefreshToken             *bool
+	DisplayName              string
+	AppType                  string
+	AuthMethod               string
+	ResponseType             string
+	GrantType                string
+	RedirectURIs             []string
+	PostLogoutRedirectURIs   []string
 }
 
 type TokenSource func() (string, error)
@@ -83,22 +102,25 @@ func NewClient(baseURL, host string, tokenSource TokenSource) (*Client, error) {
 		return nil, fmt.Errorf("parse Zitadel API URL: %w", err)
 	}
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return nil, errors.New("Zitadel API URL must use http or https")
+		return nil, errors.New("zitadel API URL must use http or https")
 	}
 	if parsed.Host == "" {
-		return nil, errors.New("Zitadel API URL must include a host")
+		return nil, errors.New("zitadel API URL must include a host")
 	}
 	if host == "" {
-		return nil, errors.New("Zitadel instance host is required")
+		return nil, errors.New("zitadel instance host is required")
 	}
 	if tokenSource == nil {
-		return nil, errors.New("Zitadel token source is required")
+		return nil, errors.New("zitadel token source is required")
 	}
 	return &Client{
 		baseURL:     parsed,
 		host:        host,
 		tokenSource: tokenSource,
-		httpClient:  &http.Client{Timeout: 10 * time.Second},
+		httpClient: &http.Client{
+			Timeout:       10 * time.Second,
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		},
 	}, nil
 }
 
@@ -116,6 +138,9 @@ func (c *Client) FindByID(ctx context.Context, organization, id string) (Project
 			return Project{}, false, nil
 		}
 		return Project{}, false, err
+	}
+	if response.Project.ID != id || response.Project.Details.ResourceOwner != organizationID {
+		return Project{}, false, errors.New("project does not belong to the declared organization")
 	}
 	return response.Project, true, nil
 }
@@ -143,6 +168,9 @@ func (c *Client) FindByName(ctx context.Context, organization, name string) (Pro
 	if len(response.Result) > 1 {
 		return Project{}, false, fmt.Errorf("multiple Zitadel projects named %q", name)
 	}
+	if response.Result[0].ID == "" || response.Result[0].Name != name || response.Result[0].Details.ResourceOwner != organizationID {
+		return Project{}, false, errors.New("project does not belong to the declared organization")
+	}
 	return response.Result[0], true, nil
 }
 
@@ -154,8 +182,8 @@ func (c *Client) Create(ctx context.Context, organization string, input ProjectI
 	request := map[string]any{
 		"name":                 input.DisplayName,
 		"projectRoleAssertion": true,
-		"projectRoleCheck":     false,
-		"hasProjectCheck":      false,
+		"projectRoleCheck":     input.RoleCheck,
+		"hasProjectCheck":      input.OrganizationCheck,
 	}
 	response := struct {
 		ID string `json:"id"`
@@ -164,9 +192,9 @@ func (c *Client) Create(ctx context.Context, organization string, input ProjectI
 		return Project{}, err
 	}
 	if response.ID == "" {
-		return Project{}, errors.New("Zitadel create project response has no id")
+		return Project{}, errors.New("zitadel create project response has no id")
 	}
-	return Project{ID: response.ID, Name: input.DisplayName}, nil
+	return Project{ID: response.ID, Name: input.DisplayName, ProjectRoleCheck: input.RoleCheck, HasProjectCheck: input.OrganizationCheck, ProjectRoleAssertion: true}, nil
 }
 
 func (c *Client) FindApplicationByID(ctx context.Context, organization, projectID, appID string) (Application, bool, error) {
@@ -231,10 +259,10 @@ func (c *Client) CreateApplication(ctx context.Context, organization, projectID 
 		"appType":                oidcAppType(input.AppType),
 		"authMethodType":         "OIDC_AUTH_METHOD_TYPE_NONE",
 		"version":                "OIDC_VERSION_1_0",
-		"accessTokenType":        "OIDC_TOKEN_TYPE_JWT",
-		// Without this Zitadel omits email/profile from the id_token and every
-		// BFF sign-in fails on the user upsert (email is a required field).
-		"idTokenUserinfoAssertion": true,
+		"loginVersion":           loginVersion(input.LoginBaseURI),
+		"accessTokenType":        accessTokenType(input),
+		// Legacy BFFs require email/profile in the ID token; other products opt out.
+		"idTokenUserinfoAssertion": userinfoAssertion(input),
 	}
 	response := struct {
 		AppID    string `json:"appId"`
@@ -245,7 +273,7 @@ func (c *Client) CreateApplication(ctx context.Context, organization, projectID 
 		return Application{}, err
 	}
 	if response.AppID == "" || response.ClientID == "" {
-		return Application{}, errors.New("Zitadel create application response is missing an identifier")
+		return Application{}, errors.New("zitadel create application response is missing an identifier")
 	}
 	return Application{ID: response.AppID, ClientID: response.ClientID, Name: input.DisplayName}, nil
 }
@@ -255,6 +283,13 @@ func (c *Client) CreateApplication(ctx context.Context, organization, projectID 
 // that predate idTokenUserinfoAssertion; call it only when drift is detected —
 // Zitadel rejects a no-op update with an error.
 func (c *Client) UpdateOIDCConfig(ctx context.Context, organization, projectID, appID string, input ApplicationInput) error {
+	app, found, err := c.FindApplicationByID(ctx, organization, projectID, appID)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return errors.New("zitadel application no longer exists")
+	}
 	organizationID, err := c.organizationID(ctx, organization)
 	if err != nil {
 		return err
@@ -266,14 +301,30 @@ func (c *Client) UpdateOIDCConfig(ctx context.Context, organization, projectID, 
 		"grantTypes":               grantTypes(input),
 		"appType":                  oidcAppType(input.AppType),
 		"authMethodType":           "OIDC_AUTH_METHOD_TYPE_NONE",
-		"accessTokenType":          "OIDC_TOKEN_TYPE_JWT",
-		"idTokenUserinfoAssertion": true,
+		"accessTokenType":          accessTokenType(input),
+		"idTokenUserinfoAssertion": userinfoAssertion(input),
+		"loginVersion":             app.OIDCConfig.LoginVersion,
+		"backChannelLogoutUri":     app.OIDCConfig.BackChannelLogoutURI,
+		"additionalOrigins":        app.OIDCConfig.AdditionalOrigins,
+		"accessTokenRoleAssertion": app.OIDCConfig.AccessTokenRoleAssertion,
+		"idTokenRoleAssertion":     app.OIDCConfig.IDTokenRoleAssertion,
+		"skipNativeAppSuccessPage": app.OIDCConfig.SkipNativeAppSuccessPage,
+		"devMode":                  false,
+	}
+	if app.OIDCConfig.ClockSkew != "" {
+		request["clockSkew"] = app.OIDCConfig.ClockSkew
+	}
+	if input.LoginBaseURI != nil {
+		request["loginVersion"] = loginVersion(input.LoginBaseURI)
 	}
 	path := "/management/v1/projects/" + url.PathEscape(projectID) + "/apps/" + url.PathEscape(appID) + "/oidc_config"
 	return c.request(ctx, http.MethodPut, path, organizationID, request, nil)
 }
 
 func oidcAppType(value string) string {
+	if value == "web" {
+		return "OIDC_APP_TYPE_WEB"
+	}
 	if value == "native" {
 		return "OIDC_APP_TYPE_NATIVE"
 	}
@@ -289,10 +340,45 @@ func grantTypes(input ApplicationInput) []string {
 }
 
 func (config OIDCConfig) Matches(input ApplicationInput) bool {
-	return config.IDTokenUserinfoAssertion && config.AppType == oidcAppType(input.AppType) &&
-		config.AuthMethodType == "OIDC_AUTH_METHOD_TYPE_NONE" && config.AccessTokenType == "OIDC_TOKEN_TYPE_JWT" &&
+	// Web is enum zero and is omitted by Zitadel's protobuf JSON encoder.
+	if config.AppType == "" {
+		config.AppType = "OIDC_APP_TYPE_WEB"
+	}
+	if config.AccessTokenType == "" {
+		config.AccessTokenType = "OIDC_TOKEN_TYPE_BEARER"
+	}
+	loginMatches := true
+	if input.LoginBaseURI != nil {
+		var login struct {
+			LoginV2 *struct {
+				BaseURI string `json:"baseUri"`
+			} `json:"loginV2"`
+		}
+		loginMatches = json.Unmarshal(config.LoginVersion, &login) == nil && login.LoginV2 != nil && login.LoginV2.BaseURI == *input.LoginBaseURI
+	}
+	return loginMatches && !config.DevMode && config.IDTokenUserinfoAssertion == userinfoAssertion(input) && config.AppType == oidcAppType(input.AppType) &&
+		config.AuthMethodType == "OIDC_AUTH_METHOD_TYPE_NONE" && config.AccessTokenType == accessTokenType(input) &&
 		sameValues(config.RedirectURIs, input.RedirectURIs) && sameValues(config.PostLogoutRedirectURIs, input.PostLogoutRedirectURIs) &&
 		sameValues(config.GrantTypes, grantTypes(input)) && sameValues(config.ResponseTypes, []string{"OIDC_RESPONSE_TYPE_CODE"})
+}
+
+func accessTokenType(input ApplicationInput) string {
+	if input.AccessTokenType == "bearer" {
+		return "OIDC_TOKEN_TYPE_BEARER"
+	}
+	return "OIDC_TOKEN_TYPE_JWT"
+}
+
+func userinfoAssertion(input ApplicationInput) bool {
+	return input.IDTokenUserinfoAssertion == nil || *input.IDTokenUserinfoAssertion
+}
+
+func loginVersion(baseURI *string) map[string]any {
+	v2 := map[string]string{}
+	if baseURI != nil {
+		v2["baseUri"] = *baseURI
+	}
+	return map[string]any{"loginV2": v2}
 }
 
 func sameValues(a, b []string) bool {
@@ -319,13 +405,13 @@ func (c *Client) organizationID(ctx context.Context, name string) (string, error
 		return "", fmt.Errorf("lookup Zitadel organization: %w", err)
 	}
 	if len(response.Result) == 0 {
-		return "", fmt.Errorf("Zitadel organization %q not found", name)
+		return "", fmt.Errorf("zitadel organization %q not found", name)
 	}
 	if len(response.Result) > 1 {
 		return "", fmt.Errorf("multiple Zitadel organizations named %q", name)
 	}
 	if response.Result[0].ID == "" {
-		return "", fmt.Errorf("Zitadel organization %q has no id", name)
+		return "", fmt.Errorf("zitadel organization %q has no id", name)
 	}
 	return response.Result[0].ID, nil
 }
@@ -345,7 +431,7 @@ func (c *Client) request(ctx context.Context, method, path, organization string,
 		return fmt.Errorf("read Zitadel management token: %w", err)
 	}
 	if strings.TrimSpace(token) == "" {
-		return errors.New("Zitadel management token is empty")
+		return errors.New("zitadel management token is empty")
 	}
 
 	endpoint := c.baseURL.ResolveReference(&url.URL{Path: path})
@@ -364,7 +450,10 @@ func (c *Client) request(ctx context.Context, method, path, organization string,
 	if err != nil {
 		return fmt.Errorf("call Zitadel management API: %w", err)
 	}
-	defer res.Body.Close()
+	defer func() {
+		// Response decoding reports read failures; closing only releases the transport.
+		_ = res.Body.Close()
+	}()
 
 	if res.StatusCode < http.StatusOK || res.StatusCode >= http.StatusMultipleChoices {
 		_, _ = io.Copy(io.Discard, io.LimitReader(res.Body, 4096))
@@ -389,16 +478,26 @@ func (e *statusError) Error() string {
 
 // UpdateProject sets the project's authentication gate. Callers must drift-guard:
 // Zitadel rejects updates that change nothing.
-func (c *Client) UpdateProject(ctx context.Context, organization, projectID, name string, roleCheck bool) error {
+func (c *Client) UpdateProject(ctx context.Context, organization, projectID, name string, roleCheck, organizationCheck bool) error {
+	project, found, err := c.FindByID(ctx, organization, projectID)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return errors.New("zitadel project no longer exists")
+	}
 	organizationID, err := c.organizationID(ctx, organization)
 	if err != nil {
 		return err
 	}
 	request := map[string]any{
 		"name":                 name,
-		"projectRoleAssertion": true,
+		"projectRoleAssertion": project.ProjectRoleAssertion,
 		"projectRoleCheck":     roleCheck,
-		"hasProjectCheck":      false,
+		"hasProjectCheck":      organizationCheck,
+	}
+	if project.PrivateLabelingSetting != "" {
+		request["privateLabelingSetting"] = project.PrivateLabelingSetting
 	}
 	return c.request(ctx, http.MethodPut, "/management/v1/projects/"+url.PathEscape(projectID), organizationID, request, nil)
 }
@@ -408,16 +507,14 @@ func (c *Client) ListRoles(ctx context.Context, organization, projectID string) 
 	if err != nil {
 		return nil, err
 	}
-	response := struct {
-		Result []struct {
-			Key string `json:"key"`
-		} `json:"result"`
-	}{}
-	if err := c.request(ctx, http.MethodPost, "/management/v1/projects/"+url.PathEscape(projectID)+"/roles/_search", organizationID, map[string]any{"query": map[string]any{"limit": 100}}, &response); err != nil {
+	roles, err := listAll[struct {
+		Key string `json:"key"`
+	}](ctx, c, "/management/v1/projects/"+url.PathEscape(projectID)+"/roles/_search", organizationID, nil, 100)
+	if err != nil {
 		return nil, err
 	}
-	keys := make([]string, 0, len(response.Result))
-	for _, role := range response.Result {
+	keys := make([]string, 0, len(roles))
+	for _, role := range roles {
 		keys = append(keys, role.Key)
 	}
 	return keys, nil
@@ -445,7 +542,16 @@ func (c *Client) FindUserByEmail(ctx context.Context, organization, email string
 	}
 	response := struct {
 		Result []struct {
-			ID string `json:"id"`
+			ID      string `json:"id"`
+			Details struct {
+				ResourceOwner string `json:"resourceOwner"`
+			} `json:"details"`
+			Human *struct {
+				Email struct {
+					Email    string `json:"email"`
+					Verified bool   `json:"isEmailVerified"`
+				} `json:"email"`
+			} `json:"human"`
 		} `json:"result"`
 	}{}
 	if err := c.request(ctx, http.MethodPost, "/management/v1/users/_search", organizationID, request, &response); err != nil {
@@ -457,7 +563,11 @@ func (c *Client) FindUserByEmail(ctx context.Context, organization, email string
 	if len(response.Result) > 1 {
 		return "", false, fmt.Errorf("multiple Zitadel users with email %q", email)
 	}
-	return response.Result[0].ID, true, nil
+	user := response.Result[0]
+	if user.ID == "" || user.Details.ResourceOwner != organizationID || user.Human == nil || !user.Human.Email.Verified || !strings.EqualFold(user.Human.Email.Email, email) {
+		return "", false, errors.New("grant target must be a verified human user in the declared organization")
+	}
+	return user.ID, true, nil
 }
 
 func (c *Client) ListGrants(ctx context.Context, organization, projectID string) ([]UserGrant, error) {
@@ -471,13 +581,7 @@ func (c *Client) ListGrants(ctx context.Context, organization, projectID string)
 			"projectIdQuery": map[string]string{"projectId": projectID},
 		}},
 	}
-	response := struct {
-		Result []UserGrant `json:"result"`
-	}{}
-	if err := c.request(ctx, http.MethodPost, "/management/v1/users/grants/_search", organizationID, request, &response); err != nil {
-		return nil, err
-	}
-	return response.Result, nil
+	return listAll[UserGrant](ctx, c, "/management/v1/users/grants/_search", organizationID, request, 200)
 }
 
 func (c *Client) AddGrant(ctx context.Context, organization, userID, projectID string, roles []string) error {
@@ -504,4 +608,25 @@ func (c *Client) RemoveGrant(ctx context.Context, organization, userID, grantID 
 		return err
 	}
 	return c.request(ctx, http.MethodDelete, "/management/v1/users/"+url.PathEscape(userID)+"/grants/"+url.PathEscape(grantID), organizationID, nil, nil)
+}
+
+func listAll[T any](ctx context.Context, c *Client, path, organization string, payload map[string]any, limit int) ([]T, error) {
+	if payload == nil {
+		payload = map[string]any{}
+	}
+	var all []T
+	for page := 0; page < 1000; page++ {
+		payload["query"] = map[string]any{"limit": limit, "offset": len(all), "asc": true}
+		response := struct {
+			Result []T `json:"result"`
+		}{}
+		if err := c.request(ctx, http.MethodPost, path, organization, payload, &response); err != nil {
+			return nil, err
+		}
+		all = append(all, response.Result...)
+		if len(response.Result) < limit {
+			return all, nil
+		}
+	}
+	return nil, errors.New("zitadel pagination limit exceeded; refusing an incomplete result")
 }

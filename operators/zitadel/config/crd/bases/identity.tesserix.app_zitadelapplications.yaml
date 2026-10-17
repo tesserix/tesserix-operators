@@ -29,30 +29,52 @@ spec:
               properties:
                 projectRef:
                   type: object
+                  x-kubernetes-validations:
+                    - rule: self == oldSelf
+                      message: projectRef is immutable
                   required: [name]
                   properties:
                     name:
                       type: string
                       minLength: 1
+                      maxLength: 253
                 displayName:
                   type: string
                   minLength: 1
                   maxLength: 200
                 applicationType:
                   type: string
-                  enum: [native, user_agent]
+                  enum: [native, user_agent, web]
+                  x-kubernetes-validations:
+                    - rule: self == oldSelf
+                      message: applicationType is immutable
+                loginBaseUri:
+                  type: string
+                  maxLength: 2000
+                  description: Product-hosted HTTPS Login V2 base URI. Empty selects the instance Login V2 UI; omission preserves adopted settings.
                 refreshToken:
                   type: boolean
-                  description: Explicitly manages refresh grants and the declared public OIDC configuration; omission preserves legacy reconciliation.
+                  description: Controls refresh grants. Omission preserves an adopted client's refresh grant; all other declared OIDC settings are reconciled.
+                accessTokenType:
+                  type: string
+                  enum: [jwt, bearer]
+                  description: Defaults to jwt. Opaque bearer tokens require introspection when used for API authentication.
+                idTokenUserinfoAssertion:
+                  type: boolean
+                  description: Defaults to true for existing BFF consumers. False keeps email/profile out of the ID token when an access token is also issued.
                 redirectUris:
                   type: array
                   minItems: 1
+                  maxItems: 100
+                  x-kubernetes-list-type: set
                   items:
                     type: string
                     minLength: 1
                     maxLength: 2000
                 postLogoutRedirectUris:
                   type: array
+                  maxItems: 100
+                  x-kubernetes-list-type: set
                   items:
                     type: string
                     minLength: 1

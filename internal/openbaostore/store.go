@@ -27,7 +27,7 @@ type Store struct {
 	http          *http.Client
 }
 
-var pathPattern = regexp.MustCompile(`^[a-z0-9-]+/app/[a-z0-9-]+$`)
+var pathPattern = regexp.MustCompile(`^[a-z0-9-]+/(?:prod/|dev/|uat/)?app/[a-z0-9-]+$`)
 
 func New(address, role string, jwt func() (string, error), paths map[string]string, fallback Secrets, httpClient *http.Client) (*Store, error) {
 	u, err := url.Parse(address)

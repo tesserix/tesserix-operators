@@ -22,7 +22,10 @@ type MachineUser struct {
 type machineUserWire struct {
 	ID       string `json:"id"`
 	UserName string `json:"userName"`
-	Machine  *struct {
+	Details  struct {
+		ResourceOwner string `json:"resourceOwner"`
+	} `json:"details"`
+	Machine *struct {
 		Name            string `json:"name"`
 		AccessTokenType string `json:"accessTokenType"`
 	} `json:"machine"`
@@ -38,7 +41,7 @@ func (w machineUserWire) user() (MachineUser, bool) {
 // errNotMachine refuses to adopt a human account that happens to share the
 // declared user name: issuing it a PAT would hand a person's identity to a
 // service.
-var errNotMachine = errors.New("Zitadel user with the declared userName is not a machine user")
+var errNotMachine = errors.New("zitadel user with the declared userName is not a machine user")
 
 func (c *Client) FindMachineUserByID(ctx context.Context, organization, userID string) (MachineUser, bool, error) {
 	organizationID, err := c.organizationID(ctx, organization)
@@ -58,6 +61,9 @@ func (c *Client) FindMachineUserByID(ctx context.Context, organization, userID s
 	user, ok := response.User.user()
 	if !ok {
 		return MachineUser{}, false, errNotMachine
+	}
+	if user.ID != userID || response.User.Details.ResourceOwner != organizationID {
+		return MachineUser{}, false, errors.New("machine user does not belong to the declared organization")
 	}
 	return user, true, nil
 }
@@ -85,6 +91,9 @@ func (c *Client) FindMachineUserByName(ctx context.Context, organization, userNa
 		if !ok {
 			return MachineUser{}, false, errNotMachine
 		}
+		if user.ID == "" || user.UserName != userName || response.Result[0].Details.ResourceOwner != organizationID {
+			return MachineUser{}, false, errors.New("machine user does not belong to the declared organization")
+		}
 		return user, true, nil
 	default:
 		return MachineUser{}, false, errors.New("multiple Zitadel users match the declared userName")
@@ -104,7 +113,7 @@ func (c *Client) CreateMachineUser(ctx context.Context, organization, userName, 
 		return MachineUser{}, err
 	}
 	if response.UserID == "" {
-		return MachineUser{}, errors.New("Zitadel machine user response is missing an identifier")
+		return MachineUser{}, errors.New("zitadel machine user response is missing an identifier")
 	}
 	return MachineUser{ID: response.UserID, UserName: userName, Name: name, AccessTokenType: AccessTokenTypeJWT}, nil
 }
@@ -129,15 +138,13 @@ func (c *Client) ReplacePersonalAccessTokens(ctx context.Context, organization, 
 		return "", err
 	}
 	base := "/management/v1/users/" + url.PathEscape(userID) + "/pats"
-	existing := struct {
-		Result []struct {
-			ID string `json:"id"`
-		} `json:"result"`
-	}{}
-	if err := c.request(ctx, http.MethodPost, base+"/_search", organizationID, map[string]any{"query": map[string]any{"limit": 100}}, &existing); err != nil {
+	existing, err := listAll[struct {
+		ID string `json:"id"`
+	}](ctx, c, base+"/_search", organizationID, nil, 100)
+	if err != nil {
 		return "", err
 	}
-	for _, token := range existing.Result {
+	for _, token := range existing {
 		if err := c.request(ctx, http.MethodDelete, base+"/"+url.PathEscape(token.ID), organizationID, nil, nil); err != nil {
 			return "", err
 		}
@@ -149,7 +156,7 @@ func (c *Client) ReplacePersonalAccessTokens(ctx context.Context, organization, 
 		return "", err
 	}
 	if response.Token == "" {
-		return "", errors.New("Zitadel returned an empty personal access token")
+		return "", errors.New("zitadel returned an empty personal access token")
 	}
 	return response.Token, nil
 }
@@ -169,7 +176,7 @@ func (c *Client) ReplaceClientSecret(ctx context.Context, organization, userID s
 		return "", "", err
 	}
 	if response.ClientID == "" || response.ClientSecret == "" {
-		return "", "", errors.New("Zitadel returned an incomplete client secret")
+		return "", "", errors.New("zitadel returned an incomplete client secret")
 	}
 	return response.ClientID, response.ClientSecret, nil
 }
