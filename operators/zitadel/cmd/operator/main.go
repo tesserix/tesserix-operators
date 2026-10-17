@@ -6,12 +6,14 @@ import (
 	"errors"
 	"flag"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"regexp"
 	"strings"
 	"time"
 
+	"github.com/go-logr/logr"
 	"github.com/zitadel/oidc/v3/pkg/client/profile"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
@@ -37,6 +39,7 @@ import (
 )
 
 func main() {
+	ctrl.SetLogger(logr.FromSlogHandler(slog.Default().Handler()))
 	var apiURL string
 	var host string
 	var machineKeyFile string
