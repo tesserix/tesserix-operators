@@ -17,6 +17,7 @@ func TestOrganizationAdoptionChecksTenantBeforeAnyMutation(t *testing.T) {
 	for _, valid := range []bool{false, true} {
 		t.Run(fmt.Sprint(valid), func(t *testing.T) {
 			writes := 0
+			domainChecked := false
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
 				case "/v2/users/admin":
@@ -35,6 +36,9 @@ func TestOrganizationAdoptionChecksTenantBeforeAnyMutation(t *testing.T) {
 					_, _ = fmt.Fprint(w, `{"project":{"id":"project","details":{"resourceOwner":"owner"}}}`)
 				case "/management/v1/projectgrants/_search":
 					_, _ = fmt.Fprint(w, `{"result":[{"grantId":"grant","grantedOrgId":"hospital","projectId":"project","state":"PROJECT_GRANT_STATE_ACTIVE"}]}`)
+				case "/admin/v1/orgs/hospital/policies/domain":
+					domainChecked = true
+					_, _ = fmt.Fprint(w, `{"policy":{"validateOrgDomains":true}}`)
 				case "/management/v1/policies/login":
 					if r.Method == "GET" {
 						_ = json.NewEncoder(w).Encode(map[string]any{"isDefault": true, "policy": map[string]any{"allowUsernamePassword": true, "allowRegister": true, "allowExternalIdp": true, "secondFactors": []string{"SECOND_FACTOR_TYPE_OTP"}, "passwordCheckLifetime": reauthLifetime}})
@@ -64,7 +68,7 @@ func TestOrganizationAdoptionChecksTenantBeforeAnyMutation(t *testing.T) {
 				if err == nil || writes != 0 {
 					t.Fatalf("foreign tenant mutated: %v writes=%d", err, writes)
 				}
-			} else if err != nil || id != "hospital" || writes != 1 {
+			} else if err != nil || id != "hospital" || writes != 1 || !domainChecked {
 				t.Fatalf("adoption: %s %v writes=%d", id, err, writes)
 			}
 		})
@@ -121,6 +125,8 @@ func TestNewOrganizationRecoversLostCreateResponseWithoutDuplicatingOwner(t *tes
 			_, _ = fmt.Fprint(w, `{"result":[{"id":"owner","name":"TESSERIX"}]}`)
 		case "/management/v1/projects/project":
 			_, _ = fmt.Fprint(w, `{"project":{"id":"project","details":{"resourceOwner":"owner"}}}`)
+		case "/admin/v1/orgs/" + id + "/policies/domain":
+			_, _ = fmt.Fprint(w, `{"policy":{"validateOrgDomains":true}}`)
 		case "/management/v1/policies/login":
 			_, _ = fmt.Fprint(w, `{"policy":{"forceMfa":true,"ignoreUnknownUsernames":true}}`)
 		case "/management/v1/projectgrants/_search":

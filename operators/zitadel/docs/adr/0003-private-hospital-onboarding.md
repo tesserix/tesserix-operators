@@ -71,7 +71,7 @@ flowchart LR
 3. Controller writes held intent YAML before remote mutation. New organizations
    use a deterministic ID. Adoption requires matching existing tenant metadata.
 4. Controller validates active verified initial human, product ownership and
-   active organization; creates the grant and strict new-org policy. It never
+   active organization; creates the grant and strict new-org policy with required domain verification. It never
    deletes identities, overwrites a tenant binding, reactivates inactive state,
    changes existing memberships, or trusts a claimed domain.
 5. Onboarding API authenticates controller, checks the stored claim and live
@@ -118,7 +118,7 @@ Adopt YES HOSPITAL's current organization and UUID, using its existing clinical
 administrator. Preserve all clinical rows and other memberships. Adopt the
 Helivanta project/client unchanged before considering a project-wide org gate.
 Do not move users between directories or migrate clinical data for this change.
-Policies inherited by existing orgs may be preserved during a staged MFA
+Login/domain policies inherited by existing orgs may be preserved during a staged MFA
 cutover; such an org is not evidence that MFA is enforced. No global policy
 change is authorized by a customer claim.
 

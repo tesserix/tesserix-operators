@@ -107,6 +107,9 @@ func (c *Client) EnsureOrganization(ctx context.Context, spec identity.ZitadelOr
 		return "", errors.New("product project not found")
 	}
 	if !spec.PreserveLoginPolicy {
+		if err = c.ensureHospitalDomainPolicy(ctx, id); err != nil {
+			return "", err
+		}
 		if err = c.ensureHospitalLogin(ctx, id); err != nil {
 			return "", err
 		}
@@ -198,4 +201,32 @@ func (c *Client) ensureHospitalLogin(ctx context.Context, orgID string) error {
 		policy["multiFactors"] = current.Policy["multiFactors"]
 	}
 	return c.request(ctx, method, "/management/v1/policies/login", orgID, policy, nil)
+}
+
+func (c *Client) ensureHospitalDomainPolicy(ctx context.Context, orgID string) error {
+	var current struct {
+		IsDefault bool `json:"isDefault"`
+		Policy    *struct {
+			IsDefault             bool `json:"isDefault"`
+			UserLoginMustBeDomain bool `json:"userLoginMustBeDomain"`
+			ValidateOrgDomains    bool `json:"validateOrgDomains"`
+			SMTPSenderMatches     bool `json:"smtpSenderAddressMatchesInstanceDomain"`
+		} `json:"policy"`
+	}
+	path := "/admin/v1/orgs/" + url.PathEscape(orgID) + "/policies/domain"
+	if err := c.request(ctx, http.MethodGet, path, "", nil, &current); err != nil {
+		return err
+	}
+	if current.Policy == nil {
+		return errors.New("hospital domain policy is missing")
+	}
+	inherited := current.IsDefault || current.Policy.IsDefault
+	if !inherited && current.Policy.ValidateOrgDomains {
+		return nil
+	}
+	method := http.MethodPut
+	if inherited {
+		method = http.MethodPost
+	}
+	return c.request(ctx, method, path, "", map[string]bool{"validateOrgDomains": true, "userLoginMustBeDomain": current.Policy.UserLoginMustBeDomain, "smtpSenderAddressMatchesInstanceDomain": current.Policy.SMTPSenderMatches}, nil)
 }
