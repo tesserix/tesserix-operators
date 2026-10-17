@@ -34,8 +34,12 @@ for writer/reader bindings, HTTP contracts and recovery checks.
 
 ## Provisioning interfaces
 
-A platform administrator uses the authenticated onboarding console at
-`https://onboard.tesserix.app/orgs/hospital`. Approved product backends may call
+A platform administrator opens **Identity onboarding → Helivanta onboarding** in the platform console at
+`https://console.tesserix.app/platform/provisioning/orgs/hospital`. The console requires
+`platform` access and `rotate-credentials` for provisioning writes; destructive
+identity actions additionally require `hard-delete`. Its BFF forwards only the
+server-held human token to the private API, preserving audit attribution.
+Approved product backends use `https://console.tesserix.app` and may call
 `POST /v1/hospital-onboardings` with a verified, product-scoped machine token and
 stable `Idempotency-Key`. Only platform administrators may supply existing
 organization and tenant IDs for adoption. Generic organization creation, grant
