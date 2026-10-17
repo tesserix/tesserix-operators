@@ -27,6 +27,9 @@ privileges. A clinician shared across tenants receives separate product and
 resource memberships. The hospital selected in the UI never establishes access.
 An org grant is an authentication entitlement and is not clinical authorization.
 
+The [2026-10-17 verification record](verification-2026-10-17.md) lists the observed
+production adoption, new onboarding, credential isolation and archive checks.
+
 GCS holds protect against the routine writer and accidental deletion. Platform
 administrators can ultimately change IAM and release holds; an irreversible
 retention lock and organizational retention policy are separate decisions.
