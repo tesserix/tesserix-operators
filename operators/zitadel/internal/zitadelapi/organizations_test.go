@@ -71,7 +71,7 @@ func TestOrganizationAdoptionChecksTenantBeforeAnyMutation(t *testing.T) {
 	}
 }
 
-func TestNewOrganizationUsesStableIDAndCreatesItsOwnerOnlyOnce(t *testing.T) {
+func TestNewOrganizationRecoversLostCreateResponseWithoutDuplicatingOwner(t *testing.T) {
 	tenant := "11111111-1111-4111-8111-111111111111"
 	id := "helivanta-" + tenant
 	created := false
@@ -104,7 +104,8 @@ func TestNewOrganizationUsesStableIDAndCreatesItsOwnerOnlyOnce(t *testing.T) {
 				t.Error("missing deterministic identity/explicit initial owner")
 			}
 			created = true
-			_, _ = fmt.Fprintf(w, `{"organizationId":%q}`, id)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
 		case "/management/v1/metadata/tenant_id":
 			if r.Method == "POST" {
 				metadata = true
@@ -139,6 +140,9 @@ func TestNewOrganizationUsesStableIDAndCreatesItsOwnerOnlyOnce(t *testing.T) {
 	defer server.Close()
 	c, _ := zitadelapi.NewClient(server.URL, "auth.tesserix.app", func() (string, error) { return "token", nil })
 	spec := identity.ZitadelOrganizationSpec{Product: "helivanta", TenantID: tenant, DisplayName: "TEST Hospital", InitialAdminUserID: "admin"}
+	if _, e := c.EnsureOrganization(t.Context(), spec, "TESSERIX", "project"); e == nil {
+		t.Fatal("lost create response should leave onboarding pending")
+	}
 	for range 2 {
 		got, e := c.EnsureOrganization(t.Context(), spec, "TESSERIX", "project")
 		if e != nil || got != id {
