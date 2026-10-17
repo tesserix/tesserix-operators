@@ -1,0 +1,12 @@
+apiVersion: identity.tesserix.app/v1alpha1
+kind: ZitadelProject
+metadata:
+  name: example-hospital-product
+  namespace: identity-operator
+spec:
+  displayName: Example Hospital Product
+  organization: TESSERIX
+  # One shared product project; hospital organizations receive project grants.
+  # Establish existing customer grants before enabling this on an adopted project.
+  access:
+    mode: organization

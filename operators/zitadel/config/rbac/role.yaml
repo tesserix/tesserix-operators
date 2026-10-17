@@ -3,11 +3,14 @@ kind: ClusterRole
 metadata:
   name: zitadel-operator
 rules:
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [get, list, watch, create, update, patch]
   - apiGroups: [identity.tesserix.app]
-    resources: [zitadelprojects, zitadelapplications, zitadelmachineusers]
+    resources: [zitadelprojects, zitadelapplications, zitadelmachineusers, zitadelorganizations]
     verbs: [get, list, watch]
   - apiGroups: [identity.tesserix.app]
-    resources: [zitadelprojects/status, zitadelapplications/status, zitadelmachineusers/status]
+    resources: [zitadelprojects/status, zitadelapplications/status, zitadelmachineusers/status, zitadelorganizations/status]
     verbs: [get, update, patch]
   - apiGroups: [""]
     resources: [events]

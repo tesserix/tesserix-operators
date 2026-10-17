@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"regexp"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -56,11 +57,12 @@ func NewReconciler(client client.Client, users Users, secrets Secrets) *Reconcil
 // Zitadel returns a PAT or client secret only once, at creation, so a failed
 // handoff cannot be recovered by reading it back. OpenBao is therefore the
 // source of truth: while the claim's path holds a value, nothing is issued.
-// When it is empty, every existing credential is revoked and one new one is
-// issued and published. A crash between issue and publish leaves a credential
+// Missing previously published values require explicit recovery. A failed first
+// handoff is retried by revoking orphan credentials before reissuing. A crash
+// between issue and publish leaves a credential
 // nobody holds, and the next reconcile revokes it. A failed OpenBao READ never
 // counts as empty, or an outage would rotate a credential consumers are using.
-func (r *Reconciler) Reconcile(ctx context.Context, key types.NamespacedName) error {
+func (r *Reconciler) Reconcile(ctx context.Context, key types.NamespacedName) (reconcileErr error) {
 	claim := &identityv1alpha1.ZitadelMachineUser{}
 	if err := r.client.Get(ctx, key, claim); err != nil {
 		if apierrors.IsNotFound(err) {
@@ -68,8 +70,30 @@ func (r *Reconciler) Reconcile(ctx context.Context, key types.NamespacedName) er
 		}
 		return fmt.Errorf("get ZitadelMachineUser: %w", err)
 	}
+	if !claim.DeletionTimestamp.IsZero() {
+		return nil
+	}
+	previous := claim.DeepCopy()
+	defer func() {
+		if reconcileErr != nil {
+			claim.Status.ObservedGeneration = claim.Generation
+			meta.SetStatusCondition(&claim.Status.Conditions, metav1.Condition{Type: "Ready", Status: metav1.ConditionFalse, Reason: "ReconcileFailed", Message: reconcileErr.Error(), ObservedGeneration: claim.Generation})
+		}
+		if !reflect.DeepEqual(previous.Status, claim.Status) {
+			if err := r.client.Status().Update(ctx, claim); err != nil {
+				reconcileErr = errors.Join(reconcileErr, fmt.Errorf("update ZitadelMachineUser status: %w", err))
+			}
+		}
+	}()
 	if err := validate(claim); err != nil {
 		return err
+	}
+	_, published, err := r.secrets.Latest(ctx, claim.Name)
+	if err != nil {
+		return fmt.Errorf("read published credential: %w", err)
+	}
+	if !published && claim.Status.UserID != "" {
+		return errors.New("previously published credential is missing; restore OpenBao or perform an explicitly approved rotation")
 	}
 	user, err := r.resolve(ctx, claim)
 	if err != nil {
@@ -79,10 +103,6 @@ func (r *Reconciler) Reconcile(ctx context.Context, key types.NamespacedName) er
 		if err := r.users.UpdateMachineUser(ctx, claim.Spec.Organization, user.ID, claim.Spec.DisplayName); err != nil {
 			return fmt.Errorf("update Zitadel machine user: %w", err)
 		}
-	}
-	_, published, err := r.secrets.Latest(ctx, claim.Name)
-	if err != nil {
-		return fmt.Errorf("read published credential: %w", err)
 	}
 	clientID := claim.Status.ClientID
 	if !published {
@@ -108,9 +128,6 @@ func (r *Reconciler) Reconcile(ctx context.Context, key types.NamespacedName) er
 	claim.Status.ClientID = clientID
 	claim.Status.ObservedGeneration = claim.Generation
 	meta.SetStatusCondition(&claim.Status.Conditions, metav1.Condition{Type: "Ready", Status: metav1.ConditionTrue, Reason: "Reconciled", Message: "Zitadel machine user is reconciled and its credential is published", ObservedGeneration: claim.Generation})
-	if err := r.client.Status().Update(ctx, claim); err != nil {
-		return fmt.Errorf("update ZitadelMachineUser status: %w", err)
-	}
 	return nil
 }
 
@@ -143,6 +160,9 @@ func validate(claim *identityv1alpha1.ZitadelMachineUser) error {
 	}
 	if !userNamePattern.MatchString(claim.Spec.UserName) {
 		return errors.New("spec.userName must be a lowercase DNS label")
+	}
+	if claim.Spec.UserName != claim.Name {
+		return errors.New("spec.userName must match the reviewed claim name")
 	}
 	if claim.Spec.DisplayName == "" {
 		return errors.New("spec.displayName is required")

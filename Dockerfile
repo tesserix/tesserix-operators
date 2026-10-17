@@ -1,7 +1,9 @@
-ARG BUILDER_IMAGE=ghcr.io/tesserix/base-go-builder:weekly
-ARG RUNTIME_IMAGE=ghcr.io/tesserix/base-distroless-static:weekly
+ARG BUILDER_IMAGE=ghcr.io/tesserix/base-go-builder:weekly@sha256:03f7dc939802b567835fce13a09edb89bb9904918dd5edd0025022f1976f4c89
+ARG RUNTIME_IMAGE=ghcr.io/tesserix/base-distroless-static:weekly@sha256:489f033f622bfac077447cfe7e8d9dbec9678429fa717e1bb74bfe770f9e61ba
 
 FROM ${BUILDER_IMAGE} AS build
+ARG GO_VERSION=1.27.2
+ENV GOTOOLCHAIN=go${GO_VERSION}
 WORKDIR /workspace
 COPY go.mod go.sum ./
 RUN go mod download

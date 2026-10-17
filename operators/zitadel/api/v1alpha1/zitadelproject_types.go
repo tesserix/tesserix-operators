@@ -12,7 +12,7 @@ type ZitadelProjectSpec struct {
 	DisplayName  string `json:"displayName"`
 	Organization string `json:"organization"`
 	// Access controls who may authenticate to this project's applications.
-	// Absent means public: any signed-in org user gets tokens.
+	// Absent preserves the access policy of an adopted project.
 	Access *ZitadelProjectAccess `json:"access,omitempty"`
 }
 
@@ -21,7 +21,7 @@ type ZitadelProjectSpec struct {
 // the project can authenticate; the members list is reconciled to exactly
 // those grants.
 type ZitadelProjectAccess struct {
-	// Mode is "public" or "restricted".
+	// Mode is public, restricted (exact user grants), or organization (tenant project grants).
 	Mode string `json:"mode"`
 	// Members are the only users allowed to sign in when Mode is restricted.
 	Members []ZitadelProjectMember `json:"members,omitempty"`
@@ -57,6 +57,10 @@ type ZitadelProjectReference struct {
 }
 
 type ZitadelApplicationSpec struct {
+	AccessTokenType          string `json:"accessTokenType,omitempty"`
+	IDTokenUserinfoAssertion *bool  `json:"idTokenUserinfoAssertion,omitempty"`
+	// LoginBaseURI selects a product-hosted Login V2 UI. Nil preserves an adopted client's login UI.
+	LoginBaseURI           *string                 `json:"loginBaseUri,omitempty"`
 	RefreshToken           *bool                   `json:"refreshToken,omitempty"`
 	ProjectRef             ZitadelProjectReference `json:"projectRef"`
 	DisplayName            string                  `json:"displayName"`
@@ -131,6 +135,14 @@ func (in *ZitadelApplication) DeepCopy() *ZitadelApplication {
 	}
 	out := *in
 	out.ObjectMeta = *in.ObjectMeta.DeepCopy()
+	if in.Spec.LoginBaseURI != nil {
+		value := *in.Spec.LoginBaseURI
+		out.Spec.LoginBaseURI = &value
+	}
+	if in.Spec.IDTokenUserinfoAssertion != nil {
+		value := *in.Spec.IDTokenUserinfoAssertion
+		out.Spec.IDTokenUserinfoAssertion = &value
+	}
 	if in.Spec.RefreshToken != nil {
 		value := *in.Spec.RefreshToken
 		out.Spec.RefreshToken = &value
@@ -156,7 +168,7 @@ func (in *ZitadelApplicationList) DeepCopy() *ZitadelApplicationList {
 }
 
 func AddToScheme(scheme *runtime.Scheme) error {
-	scheme.AddKnownTypes(GroupVersion, &ZitadelProject{}, &ZitadelProjectList{}, &ZitadelApplication{}, &ZitadelApplicationList{}, &ZitadelMachineUser{}, &ZitadelMachineUserList{})
+	scheme.AddKnownTypes(GroupVersion, &ZitadelProject{}, &ZitadelProjectList{}, &ZitadelApplication{}, &ZitadelApplicationList{}, &ZitadelMachineUser{}, &ZitadelMachineUserList{}, &ZitadelOrganization{}, &ZitadelOrganizationList{})
 	metav1.AddToGroupVersion(scheme, GroupVersion)
 	return nil
 }

@@ -271,13 +271,17 @@ type fakeProjects struct {
 	createCalls        int
 	listGrantCalls     int
 	updateProjectCalls []bool
+	organizationChecks []bool
 	addedRoles         []string
 	addedGrants        map[string][]string
 	updatedGrants      map[string][]string
 	removedGrants      []string
 }
 
-func (f *fakeProjects) FindByID(context.Context, string, string) (zitadelproject.Project, bool, error) {
+func (f *fakeProjects) FindByID(_ context.Context, _ string, id string) (zitadelproject.Project, bool, error) {
+	if f.project.ID == id {
+		return f.project, true, nil
+	}
 	return zitadelproject.Project{}, false, nil
 }
 
@@ -293,8 +297,9 @@ func (f *fakeProjects) Create(context.Context, string, zitadelproject.ProjectInp
 	return f.created, nil
 }
 
-func (f *fakeProjects) UpdateProject(_ context.Context, _, _, _ string, roleCheck bool) error {
+func (f *fakeProjects) UpdateProject(_ context.Context, _, _, _ string, roleCheck, organizationCheck bool) error {
 	f.updateProjectCalls = append(f.updateProjectCalls, roleCheck)
+	f.organizationChecks = append(f.organizationChecks, organizationCheck)
 	return nil
 }
 
@@ -353,7 +358,7 @@ func (f *failingProjects) Create(context.Context, string, zitadelproject.Project
 	return zitadelproject.Project{}, errors.New("unexpected create")
 }
 
-func (f *failingProjects) UpdateProject(context.Context, string, string, string, bool) error {
+func (f *failingProjects) UpdateProject(context.Context, string, string, string, bool, bool) error {
 	return errors.New("unexpected update")
 }
 
@@ -383,4 +388,48 @@ func (f *failingProjects) UpdateGrant(context.Context, string, string, string, [
 
 func (f *failingProjects) RemoveGrant(context.Context, string, string, string) error {
 	return errors.New("unexpected remove grant")
+}
+
+func TestReconcile_omitted_access_preserves_existing_role_gate(t *testing.T) {
+	claim := &identityv1alpha1.ZitadelProject{ObjectMeta: metav1.ObjectMeta{Name: "product", Namespace: "identity"}, Spec: identityv1alpha1.ZitadelProjectSpec{DisplayName: "Product", Organization: "TESSERIX"}}
+	remote := &fakeProjects{byName: true, project: zitadelproject.Project{ID: "p", Name: "Product", ProjectRoleCheck: true}}
+	if _, err := reconcile(t, claim, remote); err != nil {
+		t.Fatal(err)
+	}
+	if len(remote.updateProjectCalls) != 0 {
+		t.Fatal("adoption without explicit access must not disable an existing authentication gate")
+	}
+}
+
+func TestReconcile_organization_mode_requires_tenant_project_grants_without_pruning_users(t *testing.T) {
+	claim := &identityv1alpha1.ZitadelProject{ObjectMeta: metav1.ObjectMeta{Name: "helivanta", Namespace: "identity"}, Spec: identityv1alpha1.ZitadelProjectSpec{DisplayName: "helivanta", Organization: "TESSERIX", Access: &identityv1alpha1.ZitadelProjectAccess{Mode: "organization"}}}
+	remote := &fakeProjects{byName: true, project: zitadelproject.Project{ID: "p", Name: "helivanta"}}
+	if _, err := reconcile(t, claim, remote); err != nil {
+		t.Fatal(err)
+	}
+	if len(remote.updateProjectCalls) != 1 || remote.updateProjectCalls[0] {
+		t.Fatalf("role gate updates: %v", remote.updateProjectCalls)
+	}
+	if len(remote.organizationChecks) != 1 || !remote.organizationChecks[0] {
+		t.Fatal("organization grant check was not enabled")
+	}
+	if remote.listGrantCalls != 0 || len(remote.removedGrants) != 0 {
+		t.Fatal("organization mode must leave hospital user grants to tenant administration")
+	}
+}
+
+func TestReconcile_unchanged_project_does_not_write_status_again(t *testing.T) {
+	claim := &identityv1alpha1.ZitadelProject{ObjectMeta: metav1.ObjectMeta{Name: "p", Namespace: "identity"}, Spec: identityv1alpha1.ZitadelProjectSpec{DisplayName: "Product", Organization: "TESSERIX"}}
+	remote := &fakeProjects{byName: true, project: zitadelproject.Project{ID: "p", Name: "Product"}}
+	r, err := reconcile(t, claim, remote)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := storedClaim(t, r, claim).ResourceVersion
+	if err := r.Reconcile(t.Context(), types.NamespacedName{Namespace: "identity", Name: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	if after := storedClaim(t, r, claim).ResourceVersion; after != before {
+		t.Fatalf("unchanged status was rewritten: before=%s after=%s", before, after)
+	}
 }

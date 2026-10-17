@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -25,7 +26,7 @@ type Projects interface {
 	FindByID(ctx context.Context, organization, id string) (Project, bool, error)
 	FindByName(ctx context.Context, organization, name string) (Project, bool, error)
 	Create(ctx context.Context, organization string, input ProjectInput) (Project, error)
-	UpdateProject(ctx context.Context, organization, projectID, name string, roleCheck bool) error
+	UpdateProject(ctx context.Context, organization, projectID, name string, roleCheck, organizationCheck bool) error
 	ListRoles(ctx context.Context, organization, projectID string) ([]string, error)
 	AddRole(ctx context.Context, organization, projectID, key string) error
 	FindUserByEmail(ctx context.Context, organization, email string) (string, bool, error)
@@ -51,7 +52,7 @@ func (r *Reconciler) Client() client.Client {
 	return r.client
 }
 
-func (r *Reconciler) Reconcile(ctx context.Context, key types.NamespacedName) error {
+func (r *Reconciler) Reconcile(ctx context.Context, key types.NamespacedName) (reconcileErr error) {
 	claim := &identityv1alpha1.ZitadelProject{}
 	if err := r.client.Get(ctx, key, claim); err != nil {
 		if apierrors.IsNotFound(err) {
@@ -59,19 +60,34 @@ func (r *Reconciler) Reconcile(ctx context.Context, key types.NamespacedName) er
 		}
 		return fmt.Errorf("get ZitadelProject: %w", err)
 	}
+	if !claim.DeletionTimestamp.IsZero() {
+		return nil
+	}
+	previous := claim.DeepCopy()
+	defer func() {
+		if reconcileErr != nil {
+			claim.Status.ObservedGeneration = claim.Generation
+			meta.SetStatusCondition(&claim.Status.Conditions, metav1.Condition{Type: "Ready", Status: metav1.ConditionFalse, Reason: "ReconcileFailed", Message: reconcileErr.Error(), ObservedGeneration: claim.Generation})
+		}
+		if !reflect.DeepEqual(previous.Status, claim.Status) {
+			if err := r.client.Status().Update(ctx, claim); err != nil {
+				reconcileErr = errors.Join(reconcileErr, fmt.Errorf("update ZitadelProject status: %w", err))
+			}
+		}
+	}()
 	if err := validate(claim); err != nil {
-		return r.recordFailure(ctx, claim, err)
+		return err
 	}
 
 	project, err := r.resolve(ctx, claim)
 	if err != nil {
-		return r.recordFailure(ctx, claim, err)
+		return err
 	}
 	if project.ID == "" {
-		return r.recordFailure(ctx, claim, errors.New("Zitadel project response has no id"))
+		return errors.New("zitadel project response has no id")
 	}
 	if err := r.ensureAccess(ctx, claim, project); err != nil {
-		return r.recordFailure(ctx, claim, err)
+		return err
 	}
 
 	claim.Status.ProjectID = project.ID
@@ -83,25 +99,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, key types.NamespacedName) er
 		Message:            "Zitadel project is reconciled",
 		ObservedGeneration: claim.Generation,
 	})
-	if err := r.client.Status().Update(ctx, claim); err != nil {
-		return fmt.Errorf("update ZitadelProject status: %w", err)
-	}
 	return nil
-}
-
-func (r *Reconciler) recordFailure(ctx context.Context, claim *identityv1alpha1.ZitadelProject, reconcileErr error) error {
-	claim.Status.ObservedGeneration = claim.Generation
-	meta.SetStatusCondition(&claim.Status.Conditions, metav1.Condition{
-		Type:               "Ready",
-		Status:             metav1.ConditionFalse,
-		Reason:             "ReconcileFailed",
-		Message:            reconcileErr.Error(),
-		ObservedGeneration: claim.Generation,
-	})
-	if err := r.client.Status().Update(ctx, claim); err != nil {
-		return fmt.Errorf("%w; update ZitadelProject failure status: %v", reconcileErr, err)
-	}
-	return reconcileErr
 }
 
 func (r *Reconciler) resolve(ctx context.Context, claim *identityv1alpha1.ZitadelProject) (Project, error) {
@@ -123,7 +121,12 @@ func (r *Reconciler) resolve(ctx context.Context, claim *identityv1alpha1.Zitade
 	if found {
 		return project, nil
 	}
-	project, err = r.projects.Create(ctx, claim.Spec.Organization, ProjectInput{DisplayName: claim.Spec.DisplayName})
+	input := ProjectInput{DisplayName: claim.Spec.DisplayName}
+	if claim.Spec.Access != nil {
+		input.RoleCheck = claim.Spec.Access.Mode == "restricted"
+		input.OrganizationCheck = claim.Spec.Access.Mode == "organization"
+	}
+	project, err = r.projects.Create(ctx, claim.Spec.Organization, input)
 	if err != nil {
 		return Project{}, fmt.Errorf("create Zitadel project: %w", err)
 	}
@@ -142,7 +145,7 @@ func validate(claim *identityv1alpha1.ZitadelProject) error {
 		return nil
 	}
 	switch access.Mode {
-	case "public":
+	case "public", "organization":
 		if len(access.Members) > 0 {
 			return errors.New("spec.access.members is only valid with mode restricted")
 		}
@@ -151,7 +154,7 @@ func validate(claim *identityv1alpha1.ZitadelProject) error {
 			return errors.New("spec.access.mode restricted requires at least one member")
 		}
 	default:
-		return fmt.Errorf("spec.access.mode must be public or restricted, got %q", access.Mode)
+		return fmt.Errorf("spec.access.mode must be public, restricted or organization, got %q", access.Mode)
 	}
 	seen := map[string]bool{}
 	for _, member := range access.Members {
@@ -173,10 +176,17 @@ func validate(claim *identityv1alpha1.ZitadelProject) error {
 func (r *Reconciler) ensureAccess(ctx context.Context, claim *identityv1alpha1.ZitadelProject, project Project) error {
 	organization := claim.Spec.Organization
 	access := claim.Spec.Access
-	restricted := access != nil && access.Mode == "restricted"
+	if access == nil {
+		return nil
+	}
+	restricted := access.Mode == "restricted"
+	organizationCheck := project.HasProjectCheck
+	if access.Mode == "organization" {
+		organizationCheck = true
+	}
 
-	if project.ProjectRoleCheck != restricted {
-		if err := r.projects.UpdateProject(ctx, organization, project.ID, project.Name, restricted); err != nil {
+	if project.ProjectRoleCheck != restricted || project.HasProjectCheck != organizationCheck {
+		if err := r.projects.UpdateProject(ctx, organization, project.ID, project.Name, restricted, organizationCheck); err != nil {
 			return fmt.Errorf("update Zitadel project role check: %w", err)
 		}
 	}
@@ -218,7 +228,7 @@ func (r *Reconciler) ensureAccess(ctx context.Context, claim *identityv1alpha1.Z
 			return fmt.Errorf("lookup Zitadel user %q: %w", email, err)
 		}
 		if !found {
-			return fmt.Errorf("Zitadel user %q not found; members must sign up before being granted access", email)
+			return fmt.Errorf("zitadel user %q not found; members must sign up before being granted access", email)
 		}
 		desired[userID] = true
 		roles := memberRoles(member)

@@ -171,3 +171,33 @@ func TestStrictStoreSkipsIdenticalValueAndRevokesToken(t *testing.T) {
 		t.Fatalf("writes=%d revokes=%d", writes, revokes)
 	}
 }
+
+func TestEnvironmentScopedSecretReadsUseOnlyTheReviewedPath(t *testing.T) {
+	reads := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/auth/kubernetes/login":
+			_, _ = w.Write([]byte(`{"auth":{"client_token":"test-token"}}`))
+		case "/v1/auth/token/revoke-self":
+			w.WriteHeader(http.StatusNoContent)
+		case "/v1/kv/data/helivanta/prod/app/helivanta-login-client":
+			reads++
+			_, _ = w.Write([]byte(`{"data":{"data":{"value":"test-value"},"metadata":{"version":1}}}`))
+		default:
+			t.Errorf("unexpected path %s", r.URL.Path)
+			w.WriteHeader(http.StatusForbidden)
+		}
+	}))
+	t.Cleanup(server.Close)
+	s, err := New(server.URL, "helivanta-writer", func() (string, error) { return "test-jwt", nil }, map[string]string{"helivanta-login-client": "helivanta/prod/app/helivanta-login-client"}, nil, server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, found, err := s.Latest(t.Context(), "helivanta-login-client")
+	if err != nil || !found || value != "test-value" || reads != 1 {
+		t.Fatalf("found=%v reads=%d err=%v", found, reads, err)
+	}
+	if _, _, err := s.Latest(t.Context(), "unreviewed"); err == nil {
+		t.Fatal("unreviewed path accepted")
+	}
+}

@@ -1,0 +1,357 @@
+--- a/k8s/operators/zitadel/resources.yaml
++++ b/k8s/operators/zitadel/resources.yaml
+@@ -4,41 +4,106 @@
+   name: zitadelprojects.identity.tesserix.app
+ spec:
+   group: identity.tesserix.app
+-  names: {kind: ZitadelProject, plural: zitadelprojects, singular: zitadelproject}
++  names:
++    kind: ZitadelProject
++    listKind: ZitadelProjectList
++    plural: zitadelprojects
++    singular: zitadelproject
++    shortNames:
++      - zproject
+   scope: Namespaced
+   versions:
+     - name: v1alpha1
+       served: true
+       storage: true
+-      subresources: {status: {}}
++      subresources:
++        status: {}
+       schema:
+         openAPIV3Schema:
+           type: object
++          required:
++            - spec
+           properties:
+             spec:
+               type: object
+-              required: [displayName, organization]
+-              properties:
+-                displayName: {type: string, minLength: 1, maxLength: 200}
+-                organization: {type: string, minLength: 1, maxLength: 200}
++              required:
++                - displayName
++                - organization
++              properties:
++                displayName:
++                  type: string
++                  minLength: 1
++                  maxLength: 200
++                organization:
++                  type: string
++                  x-kubernetes-validations:
++                    - rule: self == oldSelf
++                      message: organization is immutable
++                  minLength: 1
++                  maxLength: 200
+                 access:
+                   type: object
+-                  required: [mode]
++                  required:
++                    - mode
+                   properties:
+-                    mode: {type: string, enum: [public, restricted]}
++                    mode:
++                      type: string
++                      enum:
++                        - public
++                        - restricted
++                        - organization
+                     members:
+                       type: array
+                       maxItems: 100
+                       items:
+                         type: object
+-                        required: [email]
++                        required:
++                          - email
+                         properties:
+-                          email: {type: string, minLength: 3, maxLength: 320}
++                          email:
++                            type: string
++                            minLength: 3
++                            maxLength: 320
+                           roles:
+                             type: array
+                             maxItems: 20
+-                            items: {type: string, minLength: 1, maxLength: 100}
+-            status: {type: object, x-kubernetes-preserve-unknown-fields: true}
++                            items:
++                              type: string
++                              minLength: 1
++                              maxLength: 100
++            status:
++              type: object
++              properties:
++                projectId:
++                  type: string
++                observedGeneration:
++                  type: integer
++                  format: int64
++                conditions:
++                  type: array
++                  items:
++                    type: object
++                    required:
++                      - type
++                      - status
++                      - lastTransitionTime
++                      - reason
++                      - message
++                    properties:
++                      type:
++                        type: string
++                      status:
++                        type: string
++                      lastTransitionTime:
++                        type: string
++                        format: date-time
++                      reason:
++                        type: string
++                      message:
++                        type: string
++                      observedGeneration:
++                        type: integer
++                        format: int64
+ ---
+ apiVersion: apiextensions.k8s.io/v1
+ kind: CustomResourceDefinition
+@@ -46,16 +111,24 @@
+   name: zitadelapplications.identity.tesserix.app
+ spec:
+   group: identity.tesserix.app
+-  names: {kind: ZitadelApplication, plural: zitadelapplications, singular: zitadelapplication}
++  names:
++    kind: ZitadelApplication
++    listKind: ZitadelApplicationList
++    plural: zitadelapplications
++    singular: zitadelapplication
++    shortNames:
++      - zapp
+   scope: Namespaced
+   versions:
+     - name: v1alpha1
+       served: true
+       storage: true
+-      subresources: {status: {}}
++      subresources:
++        status: {}
+       schema:
+         openAPIV3Schema:
+           type: object
++          required: [spec]
+           properties:
+             spec:
+               type: object
+@@ -63,15 +136,86 @@
+               properties:
+                 projectRef:
+                   type: object
++                  x-kubernetes-validations:
++                    - rule: self == oldSelf
++                      message: projectRef is immutable
+                   required: [name]
+                   properties:
+-                    name: {type: string, minLength: 1}
+-                displayName: {type: string, minLength: 1, maxLength: 200}
+-                applicationType: {type: string, enum: [native, user_agent]}
+-                refreshToken: {type: boolean}
+-                redirectUris: {type: array, minItems: 1, items: {type: string, minLength: 1, maxLength: 2000}}
+-                postLogoutRedirectUris: {type: array, items: {type: string, minLength: 1, maxLength: 2000}}
+-            status: {type: object, x-kubernetes-preserve-unknown-fields: true}
++                    name:
++                      type: string
++                      minLength: 1
++                      maxLength: 253
++                displayName:
++                  type: string
++                  minLength: 1
++                  maxLength: 200
++                applicationType:
++                  type: string
++                  enum: [native, user_agent, web]
++                  x-kubernetes-validations:
++                    - rule: self == oldSelf
++                      message: applicationType is immutable
++                loginBaseUri:
++                  type: string
++                  maxLength: 2000
++                  description: Product-hosted HTTPS Login V2 base URI. Empty selects the instance Login V2 UI; omission preserves adopted settings.
++                refreshToken:
++                  type: boolean
++                  description: Controls refresh grants. Omission preserves an adopted client's refresh grant; all other declared OIDC settings are reconciled.
++                accessTokenType:
++                  type: string
++                  enum: [jwt, bearer]
++                  description: Defaults to jwt. Opaque bearer tokens require introspection when used for API authentication.
++                idTokenUserinfoAssertion:
++                  type: boolean
++                  description: Defaults to true for existing BFF consumers. False keeps email/profile out of the ID token when an access token is also issued.
++                redirectUris:
++                  type: array
++                  minItems: 1
++                  maxItems: 100
++                  x-kubernetes-list-type: set
++                  items:
++                    type: string
++                    minLength: 1
++                    maxLength: 2000
++                postLogoutRedirectUris:
++                  type: array
++                  maxItems: 100
++                  x-kubernetes-list-type: set
++                  items:
++                    type: string
++                    minLength: 1
++                    maxLength: 2000
++            status:
++              type: object
++              properties:
++                appId:
++                  type: string
++                clientId:
++                  type: string
++                observedGeneration:
++                  type: integer
++                  format: int64
++                conditions:
++                  type: array
++                  items:
++                    type: object
++                    required: [type, status, lastTransitionTime, reason, message]
++                    properties:
++                      type:
++                        type: string
++                      status:
++                        type: string
++                      lastTransitionTime:
++                        type: string
++                        format: date-time
++                      reason:
++                        type: string
++                      message:
++                        type: string
++                      observedGeneration:
++                        type: integer
++                        format: int64
+ ---
+ apiVersion: apiextensions.k8s.io/v1
+ kind: CustomResourceDefinition
+@@ -79,32 +223,83 @@
+   name: zitadelmachineusers.identity.tesserix.app
+ spec:
+   group: identity.tesserix.app
+-  names: {kind: ZitadelMachineUser, plural: zitadelmachineusers, singular: zitadelmachineuser}
++  names:
++    kind: ZitadelMachineUser
++    listKind: ZitadelMachineUserList
++    plural: zitadelmachineusers
++    singular: zitadelmachineuser
++    shortNames:
++      - zmu
+   scope: Namespaced
+   versions:
+     - name: v1alpha1
+       served: true
+       storage: true
+-      subresources: {status: {}}
++      subresources:
++        status: {}
+       schema:
+         openAPIV3Schema:
+           type: object
++          required: [spec]
+           properties:
+             spec:
+               type: object
+               required: [organization, userName, displayName, credential]
+               properties:
+-                organization: {type: string, minLength: 1}
++                organization:
++                  type: string
++                  maxLength: 200
++                  x-kubernetes-validations:
++                    - rule: self == oldSelf
++                      message: organization is immutable
++                  minLength: 1
+                 userName:
+                   type: string
+                   pattern: '^[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$'
+-                  x-kubernetes-validations: [{rule: self == oldSelf, message: userName is immutable}]
+-                displayName: {type: string, minLength: 1, maxLength: 200}
++                  x-kubernetes-validations:
++                    - rule: self == oldSelf
++                      message: userName is immutable
++                displayName:
++                  type: string
++                  minLength: 1
++                  maxLength: 200
+                 credential:
+                   type: string
+                   enum: [personalAccessToken, clientSecret]
+-                  x-kubernetes-validations: [{rule: self == oldSelf, message: credential is immutable}]
+-            status: {type: object, x-kubernetes-preserve-unknown-fields: true}
++                  description: The credential published to the claim's reviewed OpenBao path. Never written to the claim.
++                  x-kubernetes-validations:
++                    - rule: self == oldSelf
++                      message: credential is immutable
++            status:
++              type: object
++              properties:
++                userId:
++                  type: string
++                clientId:
++                  type: string
++                observedGeneration:
++                  type: integer
++                  format: int64
++                conditions:
++                  type: array
++                  items:
++                    type: object
++                    required: [type, status, lastTransitionTime, reason, message]
++                    properties:
++                      type:
++                        type: string
++                      status:
++                        type: string
++                      lastTransitionTime:
++                        type: string
++                        format: date-time
++                      reason:
++                        type: string
++                      message:
++                        type: string
++                      observedGeneration:
++                        type: integer
++                        format: int64
+ ---
+ apiVersion: external-secrets.io/v1beta1
+ kind: ExternalSecret
+@@ -141,6 +336,9 @@
+   - apiGroups: [""]
+     resources: [events]
+     verbs: [create, patch]
++  - apiGroups: [coordination.k8s.io]
++    resources: [leases]
++    verbs: [get, list, watch, create, update, patch]
+ ---
+ apiVersion: rbac.authorization.k8s.io/v1
+ kind: RoleBinding
+@@ -153,8 +351,13 @@
+ metadata:
+   name: zitadel-operator
+   namespace: identity-operator
++  annotations:
++    argocd.argoproj.io/sync-options: ServerSideApply=false
+ spec:
+   replicas: 1
++  strategy:
++    type: Recreate
++    rollingUpdate: null
+   selector: {matchLabels: {app.kubernetes.io/name: zitadel-operator}}
+   template:
+     metadata: {labels: {app.kubernetes.io/name: zitadel-operator}}
