@@ -1,337 +1,167 @@
 # Helivanta identity and hospital onboarding
 
-## Decision
+## Organization and project model
 
-Use one Zitadel organization per independently administered hospital customer,
-and one shared `helivanta` project owned by TESSERIX. A hospital group can share
-an organization when it intentionally shares its directory, SSO administration
-and identity policies; individual hospitals still need explicit application
-permissions. Do not make a project, client ID, client secret or deployment for
-every hospital.
+Use one Zitadel organization per independent identity administration boundary,
+with one stable Helivanta tenant UUID. Use the shared platform-owned Helivanta
+project and product clients. Do not create a project, client secret or deployment
+for each physical hospital. [ADR 0003](adr/0003-private-hospital-onboarding.md)
+is the implementation decision and supersedes the earlier review-only design.
 
-An organization is an identity administration boundary. It is not a substitute
-for Helivanta's tenant authorization. A user has a home identity organization
-and may have explicitly authorized membership in several Helivanta tenants.
-An email suffix, organization selection, invitation URL or browser-supplied
-`tenant_id` does not grant membership.
-
-| Concern | Authority |
+| Customer arrangement | Identity and authorization model |
 | --- | --- |
-| Authentication, password/passkeys, MFA, external SSO | Zitadel |
-| Which customers bought Helivanta | Tenant project grants plus Helivanta's active subscription/tenant state |
-| Who belongs to a hospital and may access a clinical object | Helivanta membership and OpenFGA |
-| Row isolation | Tenant-scoped transactions and forced PostgreSQL RLS |
-| Product project and OIDC client configuration | GitOps Zitadel operator |
-| Customer organization lifecycle | A durable, authenticated Helivanta onboarding workflow |
-| Credentials | Environment-scoped OpenBao paths with namespace-bound identities |
+| One independent hospital | One org and tenant; hospital and branch resources inside the tenant |
+| Hospital group sharing identity governance | One org and tenant; multiple hospitals and branches, each with explicit resource permissions |
+| Group pharmacy or lab | Resource in the group's tenant; pharmacy/lab permissions remain explicit |
+| Independent pharmacy, lab or autonomous subsidiary | Separate org and tenant; a commercial affiliation does not grant data access |
+| Clinician shared across hospitals | One home Zitadel subject; explicit membership and appropriate resource grants in each tenant |
 
-The operator does not implement the customer lifecycle workflow. It does
-not create hospitals, organization owners, external IdPs, branding or customer
-project grants. No Kubernetes hospital CRD is introduced: customer directories,
-IdP credentials and signup state do not belong in a public GitOps repository.
+Zitadel authenticates the person. Helivanta memberships and OpenFGA authorize
+product access, and tenant-scoped transactions/forced PostgreSQL RLS isolate rows.
+`tenant_admin` is deliberately a group-wide role. Give branch-only staff narrower
+roles and resource permissions. Identity `ORG_OWNER` is separate from clinical
+`tenant_admin`. Neither an org hint, email suffix, project grant nor browser-supplied
+tenant UUID creates clinical membership. Tenant switching rechecks membership
+and preserves the original authentication and idle-session deadlines.
 
-## What was actually verified on 2026-10-17
+Shared users retain their home-org authentication/MFA policy. A strict destination
+hospital policy alone does not strengthen authentication performed by a weaker
+home org. Enforce trusted-IdP/home-org assurance and a reviewed step-up policy
+before treating shared-user access as satisfying a hospital's MFA requirements.
 
-The browser console was authenticated as `samyak.rout@gmail.com` at
-`https://auth.tesserix.app`. The public OIDC issuer matched that address and
-advertised S256 PKCE. Read-only GKE inspection used account
-`unidevidp@gmail.com`, project `tesseracthub-480811`, context
-`gke_tesseracthub-480811_asia-south1_tesseract-prod-in-gke`.
+## Provisioning interfaces
 
-Zitadel v4.15.3 had 3/3 replicas, its Login V2 deployment 2/2, and the identity
-operator 1/1. Four project claims, eleven application claims and three machine
-user claims reported Ready at their current generations. Helivanta was not
-among those claims. Readiness is an observation, not proof of tenant isolation.
+A platform administrator uses the authenticated onboarding console at
+`https://onboard.tesserix.app/orgs/hospital`. Approved product backends may call
+`POST /v1/hospital-onboardings` with a verified, product-scoped machine token and
+stable `Idempotency-Key`. Only platform administrators may supply existing
+organization and tenant IDs for adoption. Generic organization creation, grant
+and enrolment routes reject Helivanta so callers cannot bypass retained records.
 
-The live Helivanta project ID was `386782452506428319`. Its existing
-`helivanta-web` client ID was `386782591925092979`, application ID
-`386782591824429683`, application type Web, authentication None/PKCE,
-authorization-code grant, no refresh grant, and a Login V2 base URI of
-`https://helivanta.app`. Its access tokens were opaque, userinfo assertion was
-off, and two exact callbacks were registered: `/api/auth/callback` and
-`/api/auth/silent-renew`. A memory-only read-only API audit verified the new
-resource-owner checks against the real Helivanta project and all three Kora
-machine users. The [adoption preview](../config/samples/identity_v1alpha1_helivanta_adoption.yaml)
-matched all managed live OIDC settings without an update. Starting sign-in at `https://helivanta.app/login`
-returned to the custom Helivanta credential screen with a Zitadel V2 auth
-request. No password was entered and a complete authenticated product session
-was not tested.
+New requests specify the display name and an existing active, verified human
+administrator subject. The API derives the new tenant UUID from the verified
+caller, product and request key. The controller creates a deterministic org,
+assigns that requested human as initial `ORG_OWNER`, requires MFA and domain
+verification, disables public signup/discovery, and establishes the shared
+Helivanta project grant. This is intentional identity delegation; approve the
+initial administrator before submitting. No IAM-wide role is granted.
 
-The following remain live findings, not settings changed by this review:
+The API alone creates/reads immutable private `ZitadelOrganization` claims in
+`identity-operator`. Customer identifiers and claims never enter public GitOps.
+The claim's product must map to an explicitly reviewed platform-owned project.
+Before changing identity, the controller writes held intent YAML. It then calls
+the onboarding API with the exact operator service-account token and audience
+`onboarding-provisioning`. The API checks the stored claim and fresh Zitadel
+proof, commits the projection/entitlement/audit and calls Helivanta using a
+separate `helivanta-provisioning` token. Helivanta accepts only the onboarding
+API service account and reconciles membership plus OpenFGA permissions after
+its local transaction commits. The exact HTTPS workload route bypasses browser
+session middleware; the backend still authenticates every request.
 
-- Helivanta's user-role and organization-project-grant login gates were both off.
-- TESSERIX and instance login policies allowed registration and did not force
-  MFA. Public organization registration was off. Product self-registration may
-  be intentional; hospitals should have separate, stricter org policies.
-- TESSERIX inherited domain settings with organization-domain verification off,
-  while domain discovery was on. Do not enable hospital domain routing until
-  ownership has been verified and the effective policy is checked.
-- The instance Login V2 forcing feature was off. Per-client V2 settings matter;
-  changing the instance forcing switch would affect unrelated products.
-- The operator management key was synchronized from the transitional GCP
-  Secret Manager source. Its existing key was used only in memory for authorized
-  read-only API checks. No credential values were printed, saved, committed or
-  copied to another secret store. Migration is pending verified OpenBao storage,
-  consumer cutover and independent recovery.
+Only a new pending tenant may bootstrap its first clinical administrator. An
+existing tenant requires the requested human's existing `tenant_admin` membership.
+A persistent activation marker prevents a completed request from recreating a
+revoked final membership. Dependency failures remain pending and retry forward;
+no rollback deletes an identity or removes clinical data. The controller writes
+a held receipt before reporting Ready at the current claim generation. The console
+reports complete only when the API confirms that activation and archive receipt.
 
-Local Helivanta source review found a custom login client that reads effective
-organization policies and a product session/membership model backed by OpenFGA.
-The source inspected did not contain a production organization-provisioning
-workflow. This review did not run Helivanta's database/RLS integration suite or
-a hospital-to-hospital penetration test, so it does not certify that product.
+This provisions the identity/tenant foundation. Hospital, branch, pharmacy and
+lab records, commercial approval, workforce invitations, customer IdPs, custom
+branding, and their resource-level access are separate authenticated product
+configuration. Do not describe identity readiness as completion of all clinical
+or commercial setup.
 
-## Automatic onboarding contract
+## Adopt an existing hospital safely
 
-The following is the required implementation contract for Helivanta's runtime
-onboarding service. It is not provided by the product-resource operator.
+1. Verify its existing Zitadel `tenant_id` metadata, UUID, org ID and exact
+   existing clinical administrator. Capture current memberships and managed
+   project/client settings privately before adoption.
+2. Select adoption in the console and supply those existing IDs. Keep
+   `preserveLoginPolicy` selected for a staged MFA/domain-policy cutover.
+3. The controller rejects a mismatched mapping or inactive identity/grant. It
+   does not move users, replace IDs, change org owners or create a second tenant.
+4. Follow the resume link and check status until Ready/current with a held receipt.
+   Compare existing memberships and client settings with the captured baseline,
+   verify the product session, and check a safe replay returns the same identity.
+5. Separately plan MFA enrollment/recovery, verified domains and any project-wide
+   org gate. Existing inherited policy preservation is a compatibility choice,
+   not evidence of MFA enforcement. Never enable a shared project gate before
+   every intended existing customer has its correct grant.
 
-1. **Authorize the request.** An authenticated platform onboarding principal or
-   approved customer-signup flow supplies a stable idempotency key. Validate the
-   commercial approval, hospital identity and authorized first administrator.
-   A public email-domain match is insufficient.
-2. **Persist intent.** In one local transaction create a pending tenant and an
-   onboarding job/outbox record. Use a unique customer key and unique Zitadel
-   organization mapping. Store the workflow ID, step and immutable remote IDs.
-   Never hold a database transaction open across a Zitadel API call.
-3. **Create the organization.** A backend-only, least-privilege provisioning
-   identity calls `POST /v2/organizations`. Save the returned org ID before
-   proceeding. Use a deterministic requested ID where supported by the API;
-   after an ambiguous timeout recover by that recorded/deterministic identity,
-   never by a mutable display name or email alone.
-4. **Set hospital policy.** Keep local signup off by default. Require the agreed
-   MFA/passkey policy, lockout, recovery and session lifetimes. Read back the
-   effective org policy; fail closed if it cannot be determined. SSO-based MFA
-   assurance needs an explicit trusted-IdP contract, not an assumption that
-   every upstream login used MFA.
-5. **Grant the product.** From the project-owner context create an explicit
-   project grant to the new hospital organization for the shared Helivanta
-   project (`POST /management/v1/projects/{projectId}/grants`). Use a small
-   entitlement role if the grant requires roles. Doctor/nurse/ward permissions
-   remain in OpenFGA. Do not use the operator's `restricted` member list for
-   hospitals: that mode deliberately prunes user grants to an exact list.
-6. **Invite the first administrator.** Bind the accepted verified subject to
-   this pending tenant through a single-use, expiring invitation. Grant only
-   the hospital's application administrator permissions. Zitadel management
-   permissions are a separate decision: use an org-scoped user-manager role
-   by default, and grant ORG_OWNER only when delegation of SSO and security
-   policy management is explicitly intended. Never grant IAM_OWNER.
-7. **Configure customer SSO and appearance.** The authenticated tenant admin
-   verifies its domain via DNS/HTTP, adds an organization-scoped IdP and binds
-   it to that org's login policy. Keep account linking and automatic signup
-   disabled until ownership, upstream issuer/tenant and allowed identities are
-   checked. Persist upstream client credentials only in that hospital's exact
-   environment-scoped OpenBao path. DNS ownership and customer IdP setup may
-   require human action; show a pending state rather than pretending signup
-   is already complete. Tenant-supplied issuer/metadata URLs must be validated;
-   block metadata-service, loopback/private and link-local destinations unless
-   an explicitly reviewed assisted connector requires them. LDAP needs a
-   separately approved network path, not unrestricted self-service egress.
-8. **Provision application authorization.** Add the tenant's initial membership
-   in Helivanta, publish through its transactional outbox, and await successful
-   OpenFGA reconciliation. Mint the Helivanta session only after verified
-   subject membership and active tenant checks. Tenant switching rechecks
-   membership on the server; it never trusts the submitted tenant ID alone.
-9. **Activate last.** Verify invitation acceptance, effective MFA, product grant,
-   tenant mapping, authorization synchronization and cross-tenant denial. Then
-   transition `pending` to `active`. Persist and audit actor, immutable IDs and
-   outcome, without credentials or patient data.
+YES HOSPITAL must use this adoption path with its current private IDs. Never put
+those customer bindings or user subjects in public fixtures or sample manifests.
+No clinical database migration is required by the identity-adoption feature.
 
-This crosses more than two systems and waits for people/DNS. Use a durable
-workflow (the house default is Temporal), not a synchronous signup handler
-with a sequence of HTTP calls. Workflow ID `helivanta-onboard-{tenantID}` is the
-idempotency key. Activities need timeouts, bounded transient retries and a
-manual-recovery state. Persist step results; retry after a crash without
-creating duplicate organizations, grants, invitations or membership tuples.
+## Retained YAML and recovery
 
-If Zitadel, OpenBao, the database or OpenFGA is unavailable, new onboarding
-stays pending/not-ready. An authorization error never becomes an allow.
-Existing authentication does not depend on the Kubernetes operator. If a later
-step fails, leave the new tenant inactive and retain its IDs for recovery;
-do not automatically delete an organization or revoke an existing customer's
-access. Destructive compensation and credential rotation need specific approval.
+The archive bucket is `tesseracthub-480811-onboarding-records-prod`. Each customer
+has immutable content-addressed revisions under
+`helivanta/prod/tenants/<UUID>/revisions/<specSHA>/`, containing held `intent.yaml`
+and `identity.yaml`. Each write requires `ifGenerationMatch=0`; an existing record
+must match exactly and remain held. Records contain configuration identifiers,
+never credentials, patient data or clinical payloads. Credentials stay in OpenBao.
 
-## Custom login UI using the shared identity platform
+The private bucket uses uniform IAM, public-access prevention, versioning,
+default event-based holds, six-year minimum retention and no expiration lifecycle.
+Terraform prevents bucket destruction. The actual operator Google service account
+has only create/get on that product/environment prefix; its Workload Identity
+binding is restricted to `identity-operator/zitadel-operator`. It cannot delete,
+overwrite or release holds. Administrators controlling IAM can ultimately change
+these protections, so this is not a promise of absolute undeletability. An
+irreversible retention lock requires a separately reviewed legal/operational decision.
 
-For a product, register one client per web/mobile/API trust boundary. The new
-`loginBaseUri` claim field selects an HTTPS Login V2 service. Web clients can
-use `applicationType: web` with authorization code and None/PKCE, matching
-Helivanta's existing client. Confidential web clients are not supported by
-this operator; do not adopt one and silently convert it to a public client.
+For recovery, read a pinned GCS generation, verify the hash and identity binding,
+and restore through an authorized private-claim workflow. Reconciliation reuses
+existing identities and held archive generations. A non-destructive replay tests
+idempotency; it is not a full disaster-recovery drill. Verify independent cluster,
+OpenBao and database recovery before claiming an established RTO/RPO.
 
-Two supported experiences:
+Offboarding must stop the desired-state claim before revoking project grants,
+otherwise reconciliation may restore them. Preserve archive history. Clinical
+membership revocation and commercial offboarding use their audited product flows;
+the identity controller does not delete customers or identities.
 
-- **Organization branding:** logos, colors, texts and org-specific policies are
-  configured on the hospital organization. Use the project private-labeling
-  setting that permits the login user's organization policy when hosted Zitadel
-  branding is required. The operator preserves that setting during updates.
-- **Product-hosted Login V2:** Helivanta renders the branded UI and uses a
-  backend login-client identity to talk to Zitadel's Session/OIDC APIs. That
-  credential stays in OpenBao and the backend; the browser never receives it.
-  Styling must never bypass org MFA/password-expiry checks, account recovery,
-  factor enrollment, WebAuthn origin/RP-ID checks or auth-request binding.
-  The present Helivanta login UI receives credentials; its backend checks them
-  through Zitadel, so the UI/backend are part of the credential trust boundary.
+## Custom login UI using Zitadel
 
-Map trusted product hosts or invitations to immutable org IDs server-side.
-An org scope/hint selects the intended login experience; it is not proof of
-membership. Never accept a browser-supplied management org header. Do not put
-hospital identity credentials, arbitrary JavaScript or unsanitized HTML in
-branding. Register exact HTTPS callbacks, validate state/nonce and PKCE S256,
-and allowlist post-login return paths. Reject wildcard callbacks and open
-redirects. Secure/HttpOnly/SameSite cookies and CSRF protection belong to the
-product session layer. Do not use a Zitadel ID token as a generic API bearer
-token; validate the intended token type, issuer, audience, algorithm and expiry.
+Register a product client per web/mobile/API trust boundary. Public web clients
+use authorization code with None/PKCE S256; exact HTTPS callbacks are mandatory.
+The operator's HTTPS `loginBaseUri` chooses a trusted Login V2 implementation.
+Confidential web client adoption is not supported; never silently convert one.
 
-## Operator changes in this review
+Two supported approaches:
 
-- Go 1.27.2 for every binary in the shared module, CI and Docker builder.
-- Public Web clients and explicit Login V2 base URI support. Token type and
-  userinfo assertion are configurable so adopting Helivanta preserves its
-  opaque/no-userinfo behavior. Existing products retain JWT/userinfo defaults.
-  Omitted zero-valued protobuf enum fields are normalized before comparing.
-- OIDC drift reconciliation independent of optional refresh-token management;
-  omission preserves existing refresh grants and custom login configuration.
-- Preservation of logout URLs, additional origins, clock skew and role flags
-  when replacing an OIDC config. Unsafe development mode is removed.
-- `access.mode: organization` turns on the tenant-project-grant gate without
-  pruning hospital users. Existing project branding and org gates survive
-  other updates; absent access preserves adopted project controls.
-- Restricted/org gates are set at project creation, avoiding a public interval.
-- Verified-human and resource-owner checks before email grants; exact machine
-  identity and organization checks before adoption.
-- Unsafe callback URI rejection, current readiness, complete paginated lists,
-  no unchanged-status write loops, bounded reconciliation and five-minute
-  drift checks. Leader election prevents concurrent credential writers.
-- Reviewed credential destinations are checked before remote mutation. A
-  missing previously published credential requires recovery, not silent
-  rotation. Initial failed handoffs remain recoverable by retry.
-- New credential mappings support `product/prod/claim`, `product/dev/claim`
-  and `product/uat/claim`; two-part legacy mappings remain compatible. OpenBao
-  policies and consumer readers must change together before any live cutover.
+- **Org branding:** configure hospital logos, colors, text and policies in its
+  organization. Use project private labeling that permits the login user's org
+  policy when hosted Zitadel branding is required. The operator preserves that
+  existing project setting. Domains must be verified before tenant routing.
+- **Product-hosted Login V2:** Helivanta renders the interface and its backend
+  calls Zitadel Session/OIDC APIs using a backend-only login-client credential
+  in OpenBao. That credential never belongs in the browser or customer YAML.
+  Credentials are checked by Zitadel; the custom UI/backend remains part of
+  the credential trust boundary. Customer themes should be validated design
+  tokens and approved images/text, never arbitrary scripts or HTML.
 
-Claims are privileged platform configuration. Product tenants must never get
-Kubernetes claim-write permissions or the operator management credential.
-Names alone are not cryptographic ownership: only trusted platform maintainers
-may approve adoption and the reviewed machine-user list.
+Map approved hosts/invitations to immutable org IDs on the server. An org hint
+selects login experience, not authorization. Preserve MFA, recovery, password
+expiry, WebAuthn origin/RP-ID and auth-request binding. Validate state/nonce,
+issuer/audience/token type/algorithm/expiry; allowlist post-login return paths.
+Use Secure/HttpOnly/SameSite cookies and CSRF protection. A Zitadel ID token is
+not a general clinical API bearer token. Customer IdP linking and upstream URL
+fetches require ownership checks, exact secrets and SSRF controls; this flow
+does not expose them as unrestricted self-service configuration.
 
-## Safe rollout and outstanding work
+## Security assurance and release evidence
 
-No production setting, grant, credential, deployment or customer was changed.
-No commits, pushes or pull requests were created.
+See [security-assurance.md](security-assurance.md) for the control/evidence matrix
+and outstanding operational requirements. Code changes and successful smoke
+tests do not establish SOC 2 certification or HIPAA compliance. BAA coverage,
+workforce policies, access reviews, risk assessments, audit retention, recovery
+drills and incident response require organizational evidence.
 
-The owning Argo application points to `tesserix-k8s/k8s/operators/zitadel`.
-Local operator sample manifests do not deploy themselves. The owning checkout
-also had unrelated user changes and did not match the complete live claim
-inventory; those files were preserved. A prerequisite patch was instead prepared
-against the current GitHub manifest and verified in an isolated temporary copy:
-[GitOps prerequisites](../config/rollout/README.md). It retains the current
-machine-user opt-ins and credential source and does not change the image digest.
-
-Before rollout, bring the updated CRDs and namespaced lease RBAC into the owning
-repository, build/publish an immutable image from this reviewed code, and update
-its image digest through the existing delivery path. For the first upgrade
-from the old controller, use Recreate to avoid an overlap with a version that
-does not participate in leader election. Operator downtime delays provisioning;
-it does not stop existing Zitadel authentication. The sample manager manifest
-includes this strategy, non-root readable key mounts and lease permissions.
-The Deployment uses a per-resource `ServerSideApply=false` Argo option with
-`rollingUpdate: null`: testing caught SSA retaining the old rolling-update
-fields when changing strategy. The Deployment was accepted using client-side
-apply with server dry run; the other prerequisites were accepted with SSA
-server dry run. Neither validation persisted changes.
-
-Adopt the existing Helivanta project with **access omitted first**, after
-confirming bootstrap and operator cannot both write its configuration. Preserve
-all remote IDs and exact live callback/logout settings. Audit the adoption
-preview before enabling a claim. Establish and test grants for every existing
-hospital/customer and support identity before switching Helivanta to
-`access.mode: organization`. Turning on that gate prematurely can lock out
-existing users. Existing sessions may remain valid until their expiry, so the
-product must enforce membership and tenant status independently.
-
-Do not flip instance-wide MFA, registration, domain or Login V2 settings as a
-shortcut. Configure new hospital orgs strictly, then separately plan changes
-for existing orgs with enrollment/recovery and customer-impact checks. Do not
-move existing users between orgs or link accounts by email during this work.
-
-Required staging evidence before clinical production onboarding:
-
-- Two hospital orgs, distinct domains and distinct tenant mappings.
-- Inventory of instance/org/project administrators and every service identity's
-  effective IAM roles, with no cross-product user-management authority granted
-  to a product workload by accident. Existing PAT lifetimes and privileged
-  credential rotation/revocation require a separately reviewed operational plan;
-  this operator intentionally grants no IAM roles.
-- Password/passkey MFA, upstream SSO, domain challenge and invitation replay
-  rejection, cross-org login selection, password reset and recovery flows.
-- Unauthorized organization rejected by the product grant gate; authorized
-  hospital A cannot read, update, export or subscribe to hospital B's objects.
-- JWT issuer/audience/algorithm/expiry failures; session revocation, logout,
-  CSRF, tenant switching and denied direct Zitadel-token access to clinical APIs.
-- Crash/retry at each onboarding step; no duplicate orgs or owner invitations.
-- OpenBao/Zitadel/OpenFGA outages, denied secret paths, credential recovery and
-  an independently accessible, tested identity backup restore.
-
-Production rollout, grant changes, credential rotation and any migration need
-specific approval under the repository AGENTS.md. Rollback is the previous
-immutable operator image plus compatible CRDs. Remote configuration changes
-are not undone by rolling back the binary; restore only captured non-secret
-settings with separately reviewed actions. Never delete claims expecting that
-to delete or recreate remote resources. Restore/recovery RPO and RTO remain
-unverified by this review.
-
-## Verification record
-
-Regression tests were written and observed failing before their fixes, including
-callback drift, erased login settings, unsafe adoption, unsafe callback schemes,
-unverified/foreign identities, missing credential recovery, stale readiness,
-truncated grant lists and management redirects.
-
-Commands run with Go 1.27.2 (a temporary GOCACHE was used for sandbox writes):
-
-| Check | Result |
-| --- | --- |
-| `go test -race ./...` | Passed after fixing the synthetic credential-shaped test fixture |
-| `go vet ./...` | Passed |
-| `go build ./...` | Passed for every operator |
-| `golangci-lint run ./operators/zitadel/... ./internal/openbaostore/...` | Passed, zero issues |
-| `govulncheck ./...` | Passed, no vulnerabilities after upgrading OpenTelemetry to 1.44.0 |
-| `gofmt -l operators/zitadel internal/openbaostore` | Clean |
-| `git diff --check` | Clean |
-| `kubectl kustomize` for CRDs and manager | Rendered successfully |
-| `kubectl apply --server-side --dry-run=server --force-conflicts` for the three CRDs | All accepted; no changes persisted |
-| `golangci-lint run ./...` | 13 pre-existing findings outside changed packages: unchecked cleanup errors and capitalized Secret Manager errors |
-
-The dry run initially reported Argo field-ownership conflicts. The subsequent
-`--force-conflicts` call still used **server dry run** and did not take ownership
-or alter live schemas. Kubernetes rejected the first uniqueness constraint;
-the final manifests use supported set-list semantics and were accepted.
-
-Container base images are pinned to the digests resolved from the existing
-Tesserix weekly images. `.dockerignore` excludes VCS metadata, local agent/cloud
-configuration, environment files and private-key files from the build context.
-No image was pushed and no production rollout was attempted.
-The source changes also reject confidential/unknown-client adoption and refuse
-to forward management authorization through redirects.
-
-A final read-only cluster check still showed the original operator image at
-1/1, all 4 project / 11 application / 3 machine-user claims Ready at their
-current generation, Zitadel at 3/3 and its login service at 2/2.
-
-Final API preview: all four managed projects passed organization ownership and
-access checks; both restricted Langfuse members passed verified-human checks,
-with two actual grants for two declared members; every one of the eleven managed
-OIDC applications matched the new reconciler's desired configuration. No updates
-were performed. The separate Helivanta adoption preview also matched exactly.
-The temporary audit program was removed after verification.
-
-Final container verification: `docker build --target zitadel-operator --tag
-tesserix-zitadel-review:go1.27.2 .` passed. Running `--help` with `--read-only`,
-`--network=none`, all capabilities dropped and `no-new-privileges` passed.
-The image user is `65532:65532` and the extracted ELF reports `go1.27.2`.
-This local arm64 image has ID
-`sha256:f85575398a970d33babaa81210d6360f2a5d27667a52090626cde119be84a90c`;
-production still requires its CI-produced image for the deployment platform.
-`go mod verify` and repository-wide formatting passed. The exact
-`govulncheck@v1.1.4` pinned by the existing shared CI workflow also passed on
-Go 1.27.2, as did the current local vulnerability scanner.
+The initial read-only review on 2026-10-17 authenticated the browser to
+`https://auth.tesserix.app` as the requested account and verified Helivanta's
+existing public Web/PKCE client, opaque access tokens and Login V2 base URI.
+The implementation preserves those contracts. Production mutations are delivered
+through reviewed GitOps with before/after membership and claim checks. Release,
+adoption and archive observations must be recorded only after they actually pass.
