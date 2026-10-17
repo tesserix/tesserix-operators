@@ -73,7 +73,7 @@ the same because it creates an identity boundary, not physical facilities.
 
 ```http
 POST /v1/hospital-onboardings HTTP/1.1
-Host: onboard.tesserix.app
+Host: console.tesserix.app
 Authorization: Bearer <short-lived approved product access token>
 Idempotency-Key: <stable UUID for this approved customer request>
 Content-Type: application/json
@@ -92,7 +92,7 @@ and check:
 
 ```http
 GET /v1/hospital-onboardings/<returned tenant UUID>?product=helivanta HTTP/1.1
-Host: onboard.tesserix.app
+Host: console.tesserix.app
 Authorization: Bearer <short-lived approved product access token>
 ```
 
