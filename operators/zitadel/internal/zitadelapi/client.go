@@ -90,10 +90,11 @@ type ApplicationInput struct {
 type TokenSource func() (string, error)
 
 type Client struct {
-	baseURL     *url.URL
-	host        string
-	tokenSource TokenSource
-	httpClient  *http.Client
+	consumerSecrets ConsumerSecrets
+	baseURL         *url.URL
+	host            string
+	tokenSource     TokenSource
+	httpClient      *http.Client
 }
 
 func NewClient(baseURL, host string, tokenSource TokenSource) (*Client, error) {
@@ -314,6 +315,10 @@ func (c *Client) UpdateOIDCConfig(ctx context.Context, organization, projectID, 
 	if app.OIDCConfig.ClockSkew != "" {
 		request["clockSkew"] = app.OIDCConfig.ClockSkew
 	}
+	var existingLogin map[string]json.RawMessage
+	if json.Unmarshal(app.OIDCConfig.LoginVersion, &existingLogin) != nil || existingLogin["loginV2"] == nil {
+		request["loginVersion"] = loginVersion(nil)
+	}
 	if input.LoginBaseURI != nil {
 		request["loginVersion"] = loginVersion(input.LoginBaseURI)
 	}
@@ -347,14 +352,14 @@ func (config OIDCConfig) Matches(input ApplicationInput) bool {
 	if config.AccessTokenType == "" {
 		config.AccessTokenType = "OIDC_TOKEN_TYPE_BEARER"
 	}
-	loginMatches := true
+	var login struct {
+		LoginV2 *struct {
+			BaseURI string `json:"baseUri"`
+		} `json:"loginV2"`
+	}
+	loginMatches := json.Unmarshal(config.LoginVersion, &login) == nil && login.LoginV2 != nil
 	if input.LoginBaseURI != nil {
-		var login struct {
-			LoginV2 *struct {
-				BaseURI string `json:"baseUri"`
-			} `json:"loginV2"`
-		}
-		loginMatches = json.Unmarshal(config.LoginVersion, &login) == nil && login.LoginV2 != nil && login.LoginV2.BaseURI == *input.LoginBaseURI
+		loginMatches = loginMatches && login.LoginV2.BaseURI == *input.LoginBaseURI
 	}
 	return loginMatches && !config.DevMode && config.IDTokenUserinfoAssertion == userinfoAssertion(input) && config.AppType == oidcAppType(input.AppType) &&
 		config.AuthMethodType == "OIDC_AUTH_METHOD_TYPE_NONE" && config.AccessTokenType == accessTokenType(input) &&

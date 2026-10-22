@@ -9,8 +9,9 @@ import (
 var GroupVersion = schema.GroupVersion{Group: "identity.tesserix.app", Version: "v1alpha1"}
 
 type ZitadelProjectSpec struct {
-	DisplayName  string `json:"displayName"`
-	Organization string `json:"organization"`
+	ConsumerOrganization *ConsumerOrganization `json:"consumerOrganization,omitempty"`
+	DisplayName          string                `json:"displayName"`
+	Organization         string                `json:"organization"`
 	// Access controls who may authenticate to this project's applications.
 	// Absent preserves the access policy of an adopted project.
 	Access *ZitadelProjectAccess `json:"access,omitempty"`
@@ -34,6 +35,7 @@ type ZitadelProjectMember struct {
 }
 
 type ZitadelProjectStatus struct {
+	ConsumerIdentity   *ConsumerIdentity  `json:"consumerIdentity,omitempty"`
 	ProjectID          string             `json:"projectId,omitempty"`
 	ObservedGeneration int64              `json:"observedGeneration,omitempty"`
 	Conditions         []metav1.Condition `json:"conditions,omitempty"`
@@ -98,6 +100,23 @@ func (in *ZitadelProject) DeepCopy() *ZitadelProject {
 		return nil
 	}
 	out := *in
+	if in.Spec.ConsumerOrganization != nil {
+		value := *in.Spec.ConsumerOrganization
+		value.Providers = append([]ConsumerProvider(nil), value.Providers...)
+		out.Spec.ConsumerOrganization = &value
+	}
+	if in.Status.ConsumerIdentity != nil {
+		value := *in.Status.ConsumerIdentity
+		value.CredentialDigests = make(map[string]string, len(in.Status.ConsumerIdentity.CredentialDigests))
+		for kind, digest := range in.Status.ConsumerIdentity.CredentialDigests {
+			value.CredentialDigests[kind] = digest
+		}
+		value.ProviderIDs = make(map[string]string, len(in.Status.ConsumerIdentity.ProviderIDs))
+		for kind, id := range in.Status.ConsumerIdentity.ProviderIDs {
+			value.ProviderIDs[kind] = id
+		}
+		out.Status.ConsumerIdentity = &value
+	}
 	out.ObjectMeta = *in.ObjectMeta.DeepCopy()
 	if in.Spec.Access != nil {
 		access := ZitadelProjectAccess{Mode: in.Spec.Access.Mode}

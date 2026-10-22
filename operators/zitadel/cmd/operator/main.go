@@ -46,6 +46,7 @@ func main() {
 	var watchNamespace string
 	var baoAddress, baoRole, baoMachineUsers, baoJWTFile string
 	var organizationProducts, archiveBucket, onboardingURL, onboardingJWTFile string
+	var consumerProviderSecrets, consumerProviderRole string
 	flag.StringVar(&apiURL, "zitadel-api-url", envOr("ZITADEL_API_URL", "http://zitadel.zitadel.svc.cluster.local:8080"), "Zitadel management API URL")
 	flag.StringVar(&host, "zitadel-host", envOr("ZITADEL_HOST", "auth.tesserix.app"), "Zitadel instance host")
 	flag.StringVar(&machineKeyFile, "zitadel-machine-key-file", envOr("ZITADEL_MACHINE_KEY_FILE", "/var/run/zitadel-admin/machine-key.json"), "path to the Zitadel machine-key JSON file")
@@ -58,6 +59,8 @@ func main() {
 	flag.StringVar(&archiveBucket, "onboarding-archive-bucket", envOr("ONBOARDING_ARCHIVE_BUCKET", ""), "private GCS bucket for held onboarding YAML; required for organizations")
 	flag.StringVar(&onboardingURL, "onboarding-api-url", envOr("ONBOARDING_API_URL", ""), "trusted product enrollment API")
 	flag.StringVar(&onboardingJWTFile, "onboarding-api-jwt-file", envOr("ONBOARDING_API_JWT_FILE", "/var/run/onboarding/token"), "audience-bound Kubernetes service-account JWT")
+	flag.StringVar(&consumerProviderSecrets, "consumer-provider-secrets", envOr("CONSUMER_PROVIDER_SECRETS", ""), "reviewed product/environment/credential OpenBao bindings; empty disables consumer organization provisioning")
+	flag.StringVar(&consumerProviderRole, "consumer-provider-openbao-role", envOr("CONSUMER_PROVIDER_OPENBAO_ROLE", "zitadel-consumer-provider-reader"), "read-only OpenBao role for consumer providers")
 	flag.Parse()
 	if watchNamespace == "" {
 		panic("watch-namespace must not be empty")
@@ -84,6 +87,17 @@ func main() {
 	projects, err := zitadelapi.NewClient(apiURL, host, tokenSource)
 	if err != nil {
 		panic(err)
+	}
+	consumerPaths, err := reviewedConsumerProviderPaths(consumerProviderSecrets)
+	if err != nil {
+		panic(err)
+	}
+	if len(consumerPaths) > 0 {
+		secrets, err := openbaostore.New(baoAddress, consumerProviderRole, func() (string, error) { return readSmallFile(baoJWTFile) }, consumerPaths, nil, &http.Client{Timeout: 10 * time.Second})
+		if err != nil {
+			panic(err)
+		}
+		projects.UseConsumerSecrets(secrets)
 	}
 	projectReconciler := zitadelproject.NewReconciler(manager.GetClient(), scheme, projects)
 	applicationReconciler := zitadelapplication.NewReconciler(manager.GetClient(), projects)
@@ -277,4 +291,16 @@ func reviewedOrganizationProjects(pairs string) (map[string]string, error) {
 		result[parts[0]] = parts[1]
 	}
 	return result, nil
+}
+
+func reviewedConsumerProviderPaths(pairs string) (map[string]string, error) {
+	if strings.TrimSpace(pairs) == "" {
+		return map[string]string{}, nil
+	}
+	for _, pair := range strings.Split(pairs, ",") {
+		if len(strings.Split(strings.TrimSpace(pair), "/")) != 3 {
+			return nil, errors.New("consumer providers require explicit product/environment/credential bindings")
+		}
+	}
+	return reviewedMachineUserPaths(pairs)
 }

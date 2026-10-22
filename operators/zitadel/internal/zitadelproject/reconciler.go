@@ -36,6 +36,10 @@ type Projects interface {
 	RemoveGrant(ctx context.Context, organization, userID, grantID string) error
 }
 
+type ConsumerOrganizations interface {
+	EnsureConsumerOrganization(context.Context, string, string, identityv1alpha1.ConsumerOrganization, *identityv1alpha1.ConsumerIdentity) (*identityv1alpha1.ConsumerIdentity, error)
+}
+
 const defaultRole = "member"
 
 type Reconciler struct {
@@ -79,6 +83,17 @@ func (r *Reconciler) Reconcile(ctx context.Context, key types.NamespacedName) (r
 		return err
 	}
 
+	if claim.Spec.ConsumerOrganization != nil {
+		consumer, ok := r.projects.(ConsumerOrganizations)
+		if !ok {
+			return errors.New("consumer organization provisioning is not configured")
+		}
+		receipt, err := consumer.EnsureConsumerOrganization(ctx, claim.Namespace+"/"+claim.Name, claim.Spec.Organization, *claim.Spec.ConsumerOrganization, claim.Status.ConsumerIdentity)
+		if err != nil {
+			return fmt.Errorf("reconcile consumer organization: %w", err)
+		}
+		claim.Status.ConsumerIdentity = receipt
+	}
 	project, err := r.resolve(ctx, claim)
 	if err != nil {
 		return err
@@ -141,6 +156,9 @@ func validate(claim *identityv1alpha1.ZitadelProject) error {
 		return errors.New("spec.organization is required")
 	}
 	access := claim.Spec.Access
+	if claim.Spec.ConsumerOrganization != nil && (access == nil || access.Mode != "public" || strings.EqualFold(claim.Spec.Organization, "TESSERIX") || strings.EqualFold(claim.Spec.Organization, "ZITADEL")) {
+		return errors.New("consumer organizations require a dedicated organization and public project")
+	}
 	if access == nil {
 		return nil
 	}

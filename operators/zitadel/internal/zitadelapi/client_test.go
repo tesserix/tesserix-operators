@@ -422,7 +422,7 @@ func TestClient_never_follows_management_redirects(t *testing.T) {
 }
 
 func TestOIDCConfig_matches_web_when_zitadel_omits_zero_value_app_type(t *testing.T) {
-	config := zitadelapi.OIDCConfig{AuthMethodType: "OIDC_AUTH_METHOD_TYPE_NONE", AccessTokenType: "OIDC_TOKEN_TYPE_JWT", IDTokenUserinfoAssertion: true, RedirectURIs: []string{"https://product.example/callback"}, ResponseTypes: []string{"OIDC_RESPONSE_TYPE_CODE"}, GrantTypes: []string{"OIDC_GRANT_TYPE_AUTHORIZATION_CODE"}}
+	config := zitadelapi.OIDCConfig{LoginVersion: json.RawMessage(`{"loginV2":{}}`), AuthMethodType: "OIDC_AUTH_METHOD_TYPE_NONE", AccessTokenType: "OIDC_TOKEN_TYPE_JWT", IDTokenUserinfoAssertion: true, RedirectURIs: []string{"https://product.example/callback"}, ResponseTypes: []string{"OIDC_RESPONSE_TYPE_CODE"}, GrantTypes: []string{"OIDC_GRANT_TYPE_AUTHORIZATION_CODE"}}
 	if !config.Matches(zitadelapi.ApplicationInput{AppType: "web", RedirectURIs: []string{"https://product.example/callback"}}) {
 		t.Fatal("valid Web client would be updated repeatedly because protobuf JSON omitted its zero-valued enum")
 	}
@@ -445,5 +445,55 @@ func TestClient_preserves_helivanta_token_preferences_when_declared(t *testing.T
 	}
 	if _, err := c.CreateApplication(t.Context(), "TESSERIX", "p", input); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestClient_managed_app_requires_v2_and_preserves_custom_uri(t *testing.T) {
+	input := zitadelapi.ApplicationInput{DisplayName: "CivicLens iOS", AppType: "native", RedirectURIs: []string{"civiclens:/auth/callback"}}
+	config := zitadelapi.OIDCConfig{AppType: "OIDC_APP_TYPE_NATIVE", AuthMethodType: "OIDC_AUTH_METHOD_TYPE_NONE", AccessTokenType: "OIDC_TOKEN_TYPE_JWT", RedirectURIs: input.RedirectURIs, GrantTypes: []string{"OIDC_GRANT_TYPE_AUTHORIZATION_CODE"}, ResponseTypes: []string{"OIDC_RESPONSE_TYPE_CODE"}, IDTokenUserinfoAssertion: true, LoginVersion: json.RawMessage(`{"loginV1":{}}`)}
+	if config.Matches(input) {
+		t.Fatal("legacy Login V1 was accepted for an operator-managed app")
+	}
+	config.LoginVersion = json.RawMessage(`{"loginV2":{"baseUri":"https://product.example/login"}}`)
+	if !config.Matches(input) {
+		t.Fatal("existing custom V2 login URI must be preserved when unspecified")
+	}
+}
+
+func TestClient_upgrades_missing_or_legacy_login_version_to_v2(t *testing.T) {
+	for _, legacy := range []string{`null`, `{"loginV1":{}}`} {
+		t.Run(legacy, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/v2/organizations/_search":
+					fmt.Fprint(w, `{"result":[{"id":"o","name":"TESSERIX"}]}`)
+				case "/management/v1/projects/p/apps/a":
+					fmt.Fprintf(w, `{"app":{"id":"a","oidcConfig":{"clientId":"c","loginVersion":%s,"clockSkew":"2s","idTokenRoleAssertion":true}}}`, legacy)
+				case "/management/v1/projects/p/apps/a/oidc_config":
+					var body map[string]any
+					if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+						t.Error(err)
+					}
+					if !reflect.DeepEqual(body["loginVersion"], map[string]any{"loginV2": map[string]any{}}) {
+						t.Error("legacy app was not upgraded to V2")
+					}
+					if body["clockSkew"] != "2s" || body["idTokenRoleAssertion"] != true {
+						t.Error("unmanaged preferences were lost during upgrade")
+					}
+					fmt.Fprint(w, `{}`)
+				default:
+					t.Errorf("unexpected %s", r.URL.Path)
+					http.NotFound(w, r)
+				}
+			}))
+			t.Cleanup(server.Close)
+			c, err := zitadelapi.NewClient(server.URL, "auth.tesserix.app", func() (string, error) { return "test", nil })
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := c.UpdateOIDCConfig(t.Context(), "TESSERIX", "p", "a", zitadelapi.ApplicationInput{AppType: "native", RedirectURIs: []string{"product:/callback"}}); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }

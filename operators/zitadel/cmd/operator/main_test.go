@@ -64,3 +64,15 @@ func TestReviewedMachineUserPaths_separates_new_environment_paths(t *testing.T) 
 		}
 	}
 }
+
+func TestConsumerProvidersRequireEnvironmentAndProductPrefix(t *testing.T) {
+	for _, input := range []string{"civiclens/civiclens-google-idp", "civiclens/prod/roamie-google-idp", "civiclens/staging/civiclens-google-idp"} {
+		if _, err := reviewedConsumerProviderPaths(input); err == nil {
+			t.Fatalf("accepted %s", input)
+		}
+	}
+	paths, err := reviewedConsumerProviderPaths("civiclens/prod/civiclens-google-idp-prod,civiclens/prod/civiclens-apple-idp-prod")
+	if err != nil || paths["civiclens-apple-idp-prod"] != "civiclens/prod/app/civiclens-apple-idp-prod" {
+		t.Fatalf("paths=%v err=%v", paths, err)
+	}
+}

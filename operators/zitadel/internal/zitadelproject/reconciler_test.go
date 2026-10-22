@@ -3,6 +3,7 @@ package zitadelproject_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -431,5 +432,40 @@ func TestReconcile_unchanged_project_does_not_write_status_again(t *testing.T) {
 	}
 	if after := storedClaim(t, r, claim).ResourceVersion; after != before {
 		t.Fatalf("unchanged status was rewritten: before=%s after=%s", before, after)
+	}
+}
+
+type consumerProjects struct {
+	*fakeProjects
+	fail bool
+}
+
+func (p *consumerProjects) EnsureConsumerOrganization(_ context.Context, binding, name string, _ identityv1alpha1.ConsumerOrganization, _ *identityv1alpha1.ConsumerIdentity) (*identityv1alpha1.ConsumerIdentity, error) {
+	if p.fail {
+		return nil, errors.New("credential unavailable")
+	}
+	return &identityv1alpha1.ConsumerIdentity{OrganizationID: "consumer-civiclens", ProviderIDs: map[string]string{"apple": "apple-id"}}, nil
+}
+
+func TestConsumerOrganizationMustReconcileBeforeProjectAndRecordsReceipt(t *testing.T) {
+	for _, failure := range []bool{false, true} {
+		t.Run(fmt.Sprint(failure), func(t *testing.T) {
+			claim := &identityv1alpha1.ZitadelProject{ObjectMeta: metav1.ObjectMeta{Name: "civiclens", Namespace: "identity-operator"}, Spec: identityv1alpha1.ZitadelProjectSpec{DisplayName: "CivicLens", Organization: "CivicLens", Access: &identityv1alpha1.ZitadelProjectAccess{Mode: "public"}, ConsumerOrganization: &identityv1alpha1.ConsumerOrganization{}}}
+			remote := &consumerProjects{fakeProjects: &fakeProjects{created: zitadelproject.Project{ID: "project-civic", Name: "CivicLens"}}, fail: failure}
+			reconciler, err := reconcile(t, claim, remote)
+			if failure {
+				if err == nil || remote.createCalls != 0 {
+					t.Fatal("created project before consumer organization was ready")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			stored := storedClaim(t, reconciler, claim)
+			if stored.Status.ConsumerIdentity == nil || stored.Status.ConsumerIdentity.OrganizationID != "consumer-civiclens" || stored.Status.ProjectID != "project-civic" {
+				t.Fatalf("wrong receipt: %+v", stored.Status)
+			}
+		})
 	}
 }

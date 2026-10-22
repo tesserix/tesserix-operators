@@ -2,6 +2,7 @@ package zitadelapplication_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"testing"
 
@@ -75,7 +76,7 @@ func TestReconcile_manages_explicit_refresh_and_redirect_drift(t *testing.T) {
 			yes := true
 			project := &identityv1alpha1.ZitadelProject{ObjectMeta: metav1.ObjectMeta{Name: "roamie", Namespace: "identity"}, Status: readyProjectStatus("p")}
 			claim := &identityv1alpha1.ZitadelApplication{ObjectMeta: metav1.ObjectMeta{Name: "roamie-ios", Namespace: "identity"}, Spec: identityv1alpha1.ZitadelApplicationSpec{ProjectRef: identityv1alpha1.ZitadelProjectReference{Name: "roamie"}, DisplayName: "Roamie iOS", ApplicationType: "native", RefreshToken: &yes, RedirectURIs: []string{"roamie:/auth/callback"}}}
-			config := zitadelapi.OIDCConfig{ClientID: "c", IDTokenUserinfoAssertion: true, AppType: "OIDC_APP_TYPE_NATIVE", AuthMethodType: "OIDC_AUTH_METHOD_TYPE_NONE", AccessTokenType: "OIDC_TOKEN_TYPE_JWT", RedirectURIs: []string{"roamie:/auth/callback"}, GrantTypes: []string{"OIDC_GRANT_TYPE_AUTHORIZATION_CODE", "OIDC_GRANT_TYPE_REFRESH_TOKEN"}, ResponseTypes: []string{"OIDC_RESPONSE_TYPE_CODE"}}
+			config := zitadelapi.OIDCConfig{LoginVersion: json.RawMessage(`{"loginV2":{}}`), ClientID: "c", IDTokenUserinfoAssertion: true, AppType: "OIDC_APP_TYPE_NATIVE", AuthMethodType: "OIDC_AUTH_METHOD_TYPE_NONE", AccessTokenType: "OIDC_TOKEN_TYPE_JWT", RedirectURIs: []string{"roamie:/auth/callback"}, GrantTypes: []string{"OIDC_GRANT_TYPE_AUTHORIZATION_CODE", "OIDC_GRANT_TYPE_REFRESH_TOKEN"}, ResponseTypes: []string{"OIDC_RESPONSE_TYPE_CODE"}}
 			if changed {
 				config.RedirectURIs = []string{"roamie:/old"}
 				config.GrantTypes = []string{"OIDC_GRANT_TYPE_AUTHORIZATION_CODE"}
@@ -211,6 +212,7 @@ func TestReconcile_leaves_adopted_application_with_userinfo_assertion_untouched(
 		},
 	}
 	remote := &fakeApplications{existing: zitadelapplication.Application{ID: "app-123", ClientID: "client-123", Name: "HomeChef iOS", OIDCConfig: zitadelapplication.OIDCConfig{
+		LoginVersion:             json.RawMessage(`{"loginV2":{}}`),
 		IDTokenUserinfoAssertion: true, AppType: "OIDC_APP_TYPE_NATIVE", AuthMethodType: "OIDC_AUTH_METHOD_TYPE_NONE", AccessTokenType: "OIDC_TOKEN_TYPE_JWT",
 		RedirectURIs: []string{"com.homechef.app:/oauth/callback"}, GrantTypes: []string{"OIDC_GRANT_TYPE_AUTHORIZATION_CODE"}, ResponseTypes: []string{"OIDC_RESPONSE_TYPE_CODE"},
 	}}, existingFound: true}
