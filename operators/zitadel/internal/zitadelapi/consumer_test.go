@@ -75,7 +75,10 @@ func TestConsumerOrganization_scopes_social_only_policy_and_branding_and_reuses_
 				t.Errorf("unsafe options: %v", options)
 			}
 			fmt.Fprintf(w, `{"id":%q}`, name+"-id")
-		case "/management/v1/idps/google-id/google", "/management/v1/idps/apple-id/apple", "/management/v1/idps/facebook-id/oauth":
+		case "/management/v1/idps/google/google-id", "/management/v1/idps/apple/apple-id", "/management/v1/idps/oauth/facebook-id":
+			if r.Method != http.MethodPut {
+				t.Errorf("provider update method = %s, want PUT", r.Method)
+			}
 			fmt.Fprint(w, `{}`)
 		case "/management/v1/policies/login":
 			if r.Method == "GET" {

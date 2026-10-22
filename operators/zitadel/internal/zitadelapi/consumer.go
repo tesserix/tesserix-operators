@@ -246,7 +246,7 @@ func (c *Client) ensureConsumerProvider(ctx context.Context, orgID, kind string,
 	method := http.MethodPost
 	if id != "" {
 		method = http.MethodPut
-		path = "/management/v1/idps/" + url.PathEscape(id) + "/" + configKind
+		path += "/" + url.PathEscape(id)
 	}
 	var response struct {
 		ID string `json:"id"`
