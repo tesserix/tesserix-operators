@@ -46,7 +46,7 @@ func main() {
 	var watchNamespace string
 	var baoAddress, baoRole, baoMachineUsers, baoJWTFile string
 	var organizationProducts, archiveBucket, onboardingURL, onboardingJWTFile string
-	var consumerProviderSecrets, consumerProviderRole string
+	var consumerProviderSecrets, consumerProviderRole, consumerProviderJWTFile string
 	flag.StringVar(&apiURL, "zitadel-api-url", envOr("ZITADEL_API_URL", "http://zitadel.zitadel.svc.cluster.local:8080"), "Zitadel management API URL")
 	flag.StringVar(&host, "zitadel-host", envOr("ZITADEL_HOST", "auth.tesserix.app"), "Zitadel instance host")
 	flag.StringVar(&machineKeyFile, "zitadel-machine-key-file", envOr("ZITADEL_MACHINE_KEY_FILE", "/var/run/zitadel-admin/machine-key.json"), "path to the Zitadel machine-key JSON file")
@@ -61,6 +61,7 @@ func main() {
 	flag.StringVar(&onboardingJWTFile, "onboarding-api-jwt-file", envOr("ONBOARDING_API_JWT_FILE", "/var/run/onboarding/token"), "audience-bound Kubernetes service-account JWT")
 	flag.StringVar(&consumerProviderSecrets, "consumer-provider-secrets", envOr("CONSUMER_PROVIDER_SECRETS", ""), "reviewed product/environment/credential OpenBao bindings; empty disables consumer organization provisioning")
 	flag.StringVar(&consumerProviderRole, "consumer-provider-openbao-role", envOr("CONSUMER_PROVIDER_OPENBAO_ROLE", "zitadel-consumer-provider-reader"), "read-only OpenBao role for consumer providers")
+	flag.StringVar(&consumerProviderJWTFile, "consumer-provider-workload-jwt-file", envOr("CONSUMER_PROVIDER_WORKLOAD_JWT_FILE", "/var/run/secrets/kubernetes.io/serviceaccount/token"), "consumer provider OpenBao workload JWT; separate from machine-user writer credentials")
 	flag.Parse()
 	if watchNamespace == "" {
 		panic("watch-namespace must not be empty")
@@ -93,7 +94,7 @@ func main() {
 		panic(err)
 	}
 	if len(consumerPaths) > 0 {
-		secrets, err := openbaostore.New(baoAddress, consumerProviderRole, func() (string, error) { return readSmallFile(baoJWTFile) }, consumerPaths, nil, &http.Client{Timeout: 10 * time.Second})
+		secrets, err := openbaostore.New(baoAddress, consumerProviderRole, func() (string, error) { return readSmallFile(consumerProviderJWTFile) }, consumerPaths, nil, &http.Client{Timeout: 10 * time.Second})
 		if err != nil {
 			panic(err)
 		}

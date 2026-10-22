@@ -40,8 +40,9 @@ Set `CONSUMER_PROVIDER_SECRETS` to reviewed, comma-separated
 resolves to `kv/<product>/<environment>/app/<secret>`.
 
 `CONSUMER_PROVIDER_OPENBAO_ROLE` selects a read-only, namespace-bound Kubernetes
-role. `OPENBAO_WORKLOAD_JWT_FILE` should use a projected, short-lived token with
-an audience matching the OpenBao role. A new product needs explicit reviewed
+role. `CONSUMER_PROVIDER_WORKLOAD_JWT_FILE` should use a projected, short-lived token with
+an audience matching the OpenBao role. It is independent of the existing
+machine-user writer token, whose audience and readers remain unchanged. A new product needs explicit reviewed
 bindings and exact read-only paths, rather than a wildcard permission.
 
 Each referenced OpenBao KV v2 value has the existing store's string field `value`,
