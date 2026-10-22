@@ -23,7 +23,8 @@ func (s consumerSecrets) Latest(_ context.Context, name string) (string, bool, e
 
 func TestConsumerOrganization_scopes_social_only_policy_and_branding_and_reuses_ids(t *testing.T) {
 	created, providers := false, map[string]string{}
-	orgCreates := 0
+	orgCreates, providerCreates := 0, 0
+	loginCreates, loginUpdates := 0, 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
 		if r.Body != nil && r.ContentLength != 0 {
@@ -62,10 +63,11 @@ func TestConsumerOrganization_scopes_social_only_policy_and_branding_and_reuses_
 				if name == "facebook" {
 					configKind = "oauth"
 				}
-				result = append(result, map[string]any{"id": id, "name": name, "state": "IDP_STATE_ACTIVE", "ownerType": "IDP_OWNER_TYPE_ORG", "config": map[string]any{configKind: map[string]any{}, "options": map[string]any{"isAutoCreation": true, "isCreationAllowed": true}}})
+				result = append(result, map[string]any{"id": id, "name": strings.ToUpper(name[:1]) + name[1:], "state": "IDP_STATE_ACTIVE", "owner": "IDP_OWNER_TYPE_ORG", "config": map[string]any{configKind: map[string]any{}, "options": map[string]any{"isAutoCreation": true, "isCreationAllowed": true}}})
 			}
 			json.NewEncoder(w).Encode(map[string]any{"result": result})
 		case "/management/v1/idps/google", "/management/v1/idps/apple", "/management/v1/idps/oauth":
+			providerCreates++
 			name := strings.ToLower(body["name"].(string))
 			providers[name] = name + "-id"
 			options := body["providerOptions"].(map[string]any)
@@ -77,7 +79,11 @@ func TestConsumerOrganization_scopes_social_only_policy_and_branding_and_reuses_
 			fmt.Fprint(w, `{}`)
 		case "/management/v1/policies/login":
 			if r.Method == "GET" {
-				fmt.Fprint(w, `{"isDefault":true,"policy":{"allowUsernamePassword":true,"allowRegister":true,"externalLoginCheckLifetime":"864000s"}}`)
+				if loginCreates == 0 {
+					fmt.Fprint(w, `{"isDefault":true,"policy":{"allowUsernamePassword":true,"allowRegister":true,"externalLoginCheckLifetime":"864000s"}}`)
+				} else {
+					fmt.Fprint(w, `{"policy":{"allowExternalIdp":true,"hidePasswordReset":true,"externalLoginCheckLifetime":"43200s"}}`)
+				}
 				return
 			}
 			for _, key := range []string{"allowUsernamePassword", "allowRegister", "allowDomainDiscovery"} {
@@ -88,7 +94,11 @@ func TestConsumerOrganization_scopes_social_only_policy_and_branding_and_reuses_
 			if body["allowExternalIdp"] != true || body["passwordlessType"] != "PASSWORDLESS_TYPE_NOT_ALLOWED" {
 				t.Errorf("incorrect login policy: %v", body)
 			}
+			if r.Method == "PUT" {
+				loginUpdates++
+			}
 			if r.Method == "POST" {
+				loginCreates++
 				idps, ok := body["idps"].([]any)
 				if !ok || len(idps) != 3 {
 					t.Error("must create policy with exact provider list")
@@ -129,8 +139,11 @@ func TestConsumerOrganization_scopes_social_only_policy_and_branding_and_reuses_
 			t.Fatalf("wrong receipt: %+v", result)
 		}
 	}
-	if orgCreates != 1 || len(providers) != 3 {
-		t.Fatalf("duplicate provisioning: orgs %d providers %v", orgCreates, providers)
+	if loginCreates != 1 || loginUpdates != 0 {
+		t.Fatalf("unchanged social policy rewritten: creates %d updates %d", loginCreates, loginUpdates)
+	}
+	if orgCreates != 1 || len(providers) != 3 || providerCreates != 3 {
+		t.Fatalf("duplicate provisioning: orgs %d provider creates %d providers %v", orgCreates, providerCreates, providers)
 	}
 }
 

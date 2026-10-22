@@ -183,17 +183,17 @@ func (c *Client) EnsureConsumerOrganization(ctx context.Context, binding, name s
 		result.ProviderIDs[provider.Kind] = id
 	}
 	if err := c.ensureConsumerLogin(ctx, result); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("reconcile consumer login policy: %w", err)
 	}
 	if err := c.ensureConsumerBranding(ctx, orgID, spec); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("reconcile consumer branding: %w", err)
 	}
 	return result, nil
 }
 
 func (c *Client) ensureConsumerProvider(ctx context.Context, orgID, kind string, credential consumerCredential, digest string, previous *identity.ConsumerIdentity) (string, error) {
 	type provider struct {
-		OwnerType string                     `json:"ownerType"`
+		OwnerType string                     `json:"owner"`
 		ID        string                     `json:"id"`
 		Name      string                     `json:"name"`
 		State     string                     `json:"state"`
@@ -210,7 +210,7 @@ func (c *Client) ensureConsumerProvider(ctx context.Context, orgID, kind string,
 		configKind = "oauth"
 	}
 	for _, provider := range providers {
-		if provider.Name == kind {
+		if strings.EqualFold(provider.Name, kind) {
 			if id != "" || provider.ID == "" || provider.State != "IDP_STATE_ACTIVE" || provider.Config[configKind] == nil || provider.OwnerType != "IDP_OWNER_TYPE_ORG" {
 				return "", errors.New("ambiguous, inactive or mismatched consumer provider")
 			}
@@ -264,7 +264,7 @@ func (c *Client) ensureConsumerProvider(ctx context.Context, orgID, kind string,
 }
 
 func policyBody(policy map[string]any) map[string]any {
-	body := map[string]any{}
+	body := map[string]any{"passwordlessType": "PASSWORDLESS_TYPE_NOT_ALLOWED"}
 	for _, key := range []string{"allowUsernamePassword", "allowRegister", "allowExternalIdp", "forceMfa", "passwordlessType", "hidePasswordReset", "ignoreUnknownUsernames", "defaultRedirectUri", "passwordCheckLifetime", "externalLoginCheckLifetime", "mfaInitSkipLifetime", "secondFactorCheckLifetime", "multiFactorCheckLifetime", "allowDomainDiscovery", "disableLoginWithEmail", "disableLoginWithPhone", "forceMfaLocalOnly"} {
 		if v, ok := policy[key]; ok {
 			body[key] = v
