@@ -1,5 +1,5 @@
-ARG BUILDER_IMAGE=ghcr.io/tesserix/base-go-builder:weekly@sha256:03f7dc939802b567835fce13a09edb89bb9904918dd5edd0025022f1976f4c89
-ARG RUNTIME_IMAGE=ghcr.io/tesserix/base-distroless-static:weekly@sha256:489f033f622bfac077447cfe7e8d9dbec9678429fa717e1bb74bfe770f9e61ba
+ARG BUILDER_IMAGE=ghcr.io/tesserix/base-go-builder:weekly@sha256:f9214aed0fe09af409811bd4581bbd4af586d1a72bb667a67d03a446857dd47c
+ARG RUNTIME_IMAGE=ghcr.io/tesserix/base-distroless-static:weekly@sha256:7c885c37cb2f61400256bef39b9221b48a4860f8080101765da1c262b994cdf1
 
 FROM ${BUILDER_IMAGE} AS build
 ARG GO_VERSION=1.27.2
