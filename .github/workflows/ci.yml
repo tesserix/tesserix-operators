@@ -17,7 +17,7 @@ jobs:
   quality:
     uses: tesserix/tesserix-workflows/.github/workflows/go-ci.yml@cbdda50c8a7ebf077073602b4a5cff23f50c03c6
     with:
-      go_version: "1.27.2"
+      go_version: "1.27.3"
       coverage_min_lines: 10
 
   containers:
