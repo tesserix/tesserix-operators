@@ -1,7 +1,8 @@
 package v1alpha1
 
-// ConsumerOrganization owns an isolated social-only organization for one product.
+// ConsumerOrganization owns an isolated consumer organization for one product.
 type ConsumerOrganization struct {
+	EmailOTP           *bool              `json:"emailOtp,omitempty"`
 	InitialAdminUserID string             `json:"initialAdminUserId"`
 	Providers          []ConsumerProvider `json:"providers"`
 	PrimaryColor       string             `json:"primaryColor"`

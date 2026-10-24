@@ -71,3 +71,42 @@ claims. Populate the product-scoped credentials, then verify Ready receipts,
 V2 authorization redirects, first and returning social logins, no password/signup
 controls, and exact native callbacks. A successful claim is not proof that
 provider-side app approval or Apple Services ID configuration is complete.
+
+## Consumer email OTP (requires the consumer-email Login V2 release)
+
+`consumerOrganization.emailOtp: true` publishes a versioned `consumer_email_otp`
+organization metadata policy after checking the existing ownership binding. An
+email-only claim declares `providers: []`; existing social-only claims omit
+`emailOtp` and keep their previous behavior. Use `emailOtp: false` to revoke the
+capability. Admission rejects removing the field once declared, so reconciliation
+cannot silently leave a previously enabled policy behind. Reconciliation compares
+the stored policy and writes only on drift. SMS is always false in this policy.
+
+Email OTP is optional. An omitted setting does not opt an existing claim in;
+`true` enables it and an explicit `false` disables it, including pending sign-in
+completion. Configuration changes must be authorized for the owning organization
+and reconciled through its claim. Enabling this method must not become a required
+onboarding step or prevent a tenant from continuing with its existing methods.
+
+The current setting belongs to one consumer organization. It is not a hospital
+preference within a shared product-wide consumer organization. Independent tenant
+choices require a verified tenant-to-organization binding and an authorized
+configuration API; this claim alone does not implement a tenant settings UI.
+Do not accept an organization identifier supplied by a browser as authority to
+change another organization's sign-in methods. Optional sign-in methods do not
+make tenant isolation, code verification, rate limits or staff MFA optional.
+
+This is an isolated consumer capability, not instance-wide passwordless login.
+It does not change hospital policies, staff MFA, existing user passwords or keys.
+The Login V2 implementation must verify the operator ownership metadata, exact
+OIDC organization scope, current policy and account state on the server. Accounts
+with other enrolled authentication methods or forced MFA use their existing flow.
+The login service needs organization-metadata read permission and a dedicated
+Valkey identity restricted to `consumer-email:v1:*`; never grant this to browsers.
+
+Deploy the compatible login service before opting in a consumer claim. Metadata
+and Ready status alone do not prove email delivery, OTP verification or an OIDC
+callback. Validate those with a test mailbox and product client before advertising
+the capability. Existing Helivanta staff claims must not be repurposed as consumer
+claims. Keep patient identity and clinical authorization separate from mailbox
+verification.
