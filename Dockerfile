@@ -1,5 +1,5 @@
-ARG BUILDER_IMAGE=ghcr.io/tesserix/base-go-builder:weekly@sha256:f9214aed0fe09af409811bd4581bbd4af586d1a72bb667a67d03a446857dd47c
-ARG RUNTIME_IMAGE=ghcr.io/tesserix/base-distroless-static:weekly@sha256:7c885c37cb2f61400256bef39b9221b48a4860f8080101765da1c262b994cdf1
+ARG BUILDER_IMAGE=ghcr.io/tesserix/base-go-builder:weekly@sha256:3e00161f419a8fd7abe3144ad46d08ef809126294d785bcdd6b4b16137070a70
+ARG RUNTIME_IMAGE=ghcr.io/tesserix/base-distroless-static:weekly@sha256:a0ada4bf3d50447e7bbc3bf95f872ade97dd85feba81e7b4facf8e9fab665594
 
 FROM ${BUILDER_IMAGE} AS build
 ARG GO_VERSION=1.27.3
@@ -40,7 +40,7 @@ COPY --from=build /workspace/out/evals-onboarding-operator /evals-onboarding-ope
 USER 65532:65532
 ENTRYPOINT ["/evals-onboarding-operator"]
 
-FROM postgres:14-alpine@sha256:727876d274666da0b92a445390ba093c84b8e9f8343e1c53cd4e9a7ab2d85310 AS openpanel-project-init
+FROM postgres:14-alpine@sha256:50fce0c9c54c43d8b02ce16cb9daff75eb94c09c4ee3d41c157852ebd9700c80 AS openpanel-project-init
 RUN apk upgrade --no-cache \
     && apk add --no-cache argon2 nodejs kubectl \
     && rm -f /usr/local/bin/gosu
