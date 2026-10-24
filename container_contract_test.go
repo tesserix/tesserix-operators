@@ -9,7 +9,7 @@ import (
 func TestOpenPanelProjectInitImageIsBuiltAndPublished(t *testing.T) {
 	dockerfile := readFile(t, "Dockerfile")
 	for _, want := range []string{
-		"FROM postgres:14-alpine@sha256:727876d274666da0b92a445390ba093c84b8e9f8343e1c53cd4e9a7ab2d85310 AS openpanel-project-init",
+		"FROM postgres:14-alpine@sha256:50fce0c9c54c43d8b02ce16cb9daff75eb94c09c4ee3d41c157852ebd9700c80 AS openpanel-project-init",
 		"apk add --no-cache argon2 nodejs kubectl",
 		"rm -f /usr/local/bin/gosu",
 		"USER 65532:65532",
