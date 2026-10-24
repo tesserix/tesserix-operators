@@ -38,7 +38,15 @@ spec:
                 consumerOrganization:
                   type: object
                   required: [initialAdminUserId, providers, primaryColor, backgroundColor, fontColor]
+                  x-kubernetes-validations:
+                    - rule: has(self.emailOtp) || size(self.providers) > 0
+                      message: declare emailOtp or at least one social provider
+                    - rule: "!has(oldSelf.emailOtp) || has(self.emailOtp)"
+                      message: disable emailOtp explicitly instead of removing it
                   properties:
+                    emailOtp:
+                      type: boolean
+                      description: Opt in to consumer email OTP; false revokes the capability.
                     initialAdminUserId:
                       type: string
                       minLength: 1
@@ -51,7 +59,7 @@ spec:
                     fontColor: {type: string, pattern: '^#[A-Fa-f0-9]{6}$'}
                     providers:
                       type: array
-                      minItems: 1
+                      minItems: 0
                       maxItems: 3
                       x-kubernetes-list-type: map
                       x-kubernetes-list-map-keys: [kind]

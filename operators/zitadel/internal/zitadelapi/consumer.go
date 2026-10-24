@@ -39,7 +39,7 @@ type consumerCredential struct {
 // EnsureConsumerOrganization never adopts a shared organization or changes instance defaults.
 func (c *Client) EnsureConsumerOrganization(ctx context.Context, binding, name string, spec identity.ConsumerOrganization, previous *identity.ConsumerIdentity) (*identity.ConsumerIdentity, error) {
 	parts := strings.Split(binding, "/")
-	if len(parts) != 2 || !consumerName.MatchString(parts[0]) || !consumerName.MatchString(parts[1]) || strings.TrimSpace(name) != name || name == "" || strings.EqualFold(name, "TESSERIX") || strings.EqualFold(name, "ZITADEL") || len(name) > 200 || !organizationSourceID.MatchString(spec.InitialAdminUserID) || !consumerColor.MatchString(spec.PrimaryColor) || !consumerColor.MatchString(spec.BackgroundColor) || !consumerColor.MatchString(spec.FontColor) || len(spec.Providers) == 0 || len(spec.Providers) > 3 || c.consumerSecrets == nil {
+	if len(parts) != 2 || !consumerName.MatchString(parts[0]) || !consumerName.MatchString(parts[1]) || strings.TrimSpace(name) != name || name == "" || strings.EqualFold(name, "TESSERIX") || strings.EqualFold(name, "ZITADEL") || len(name) > 200 || !organizationSourceID.MatchString(spec.InitialAdminUserID) || !consumerColor.MatchString(spec.PrimaryColor) || !consumerColor.MatchString(spec.BackgroundColor) || !consumerColor.MatchString(spec.FontColor) || (len(spec.Providers) == 0 && spec.EmailOTP == nil) || len(spec.Providers) > 3 || (len(spec.Providers) > 0 && c.consumerSecrets == nil) {
 		return nil, errors.New("invalid or unconfigured consumer organization")
 	}
 	orgID := "consumer-" + parts[1]
@@ -187,6 +187,9 @@ func (c *Client) EnsureConsumerOrganization(ctx context.Context, binding, name s
 	}
 	if err := c.ensureConsumerBranding(ctx, orgID, spec); err != nil {
 		return nil, fmt.Errorf("reconcile consumer branding: %w", err)
+	}
+	if err := c.ensureConsumerEmailOTP(ctx, orgID, spec.EmailOTP); err != nil {
+		return nil, fmt.Errorf("reconcile consumer email OTP: %w", err)
 	}
 	return result, nil
 }

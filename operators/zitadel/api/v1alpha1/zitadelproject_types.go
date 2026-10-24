@@ -102,6 +102,10 @@ func (in *ZitadelProject) DeepCopy() *ZitadelProject {
 	out := *in
 	if in.Spec.ConsumerOrganization != nil {
 		value := *in.Spec.ConsumerOrganization
+		if value.EmailOTP != nil {
+			enabled := *value.EmailOTP
+			value.EmailOTP = &enabled
+		}
 		value.Providers = append([]ConsumerProvider(nil), value.Providers...)
 		out.Spec.ConsumerOrganization = &value
 	}
