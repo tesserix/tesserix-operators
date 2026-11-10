@@ -2,7 +2,10 @@ package zitadelorganization_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"github.com/tesserix/devai-sandbox-operator/operators/zitadel/internal/zitadelapi"
+	"strings"
 	"testing"
 
 	identity "github.com/tesserix/devai-sandbox-operator/operators/zitadel/api/v1alpha1"
@@ -14,20 +17,25 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
-type identityAPI struct{ calls int }
+type identityAPI struct {
+	calls int
+	err   error
+}
 
 func (f *identityAPI) EnsureOrganization(context.Context, identity.ZitadelOrganizationSpec, string, string) (string, error) {
 	f.calls++
-	return "existing-org", nil
+	return "existing-org", f.err
 }
 
 type archive struct {
-	calls int
-	fail  bool
+	calls    int
+	fail     bool
+	payloads []string
 }
 
-func (f *archive) Put(context.Context, string, []byte) (string, error) {
+func (f *archive) Put(_ context.Context, _ string, payload []byte) (string, error) {
 	f.calls++
+	f.payloads = append(f.payloads, string(payload))
 	if f.fail {
 		return "", errors.New("archive unavailable")
 	}
@@ -98,5 +106,51 @@ func TestActivationFailureDoesNotReportIdentityAsComplete(t *testing.T) {
 	}
 	if meta.IsStatusConditionTrue(c.Status.Conditions, "Ready") || archive.calls != 1 {
 		t.Fatal("reported or archived incomplete onboarding as complete")
+	}
+}
+
+func TestFirstOwnerRemainsPendingAndProfileNeverEntersHeldArchive(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := identity.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	var spec identity.ZitadelOrganizationSpec
+	if err := json.Unmarshal([]byte(`{"product":"helivanta","tenantId":"11111111-1111-4111-8111-111111111111","displayName":"Hospital","initialAdminUserId":"owner-11111111-1111-4111-8111-111111111111","initialAdmin":{"givenName":"PrivateGiven","familyName":"PrivateFamily","email":"private@example.test"}}`), &spec); err != nil {
+		t.Fatal(err)
+	}
+	claim := &identity.ZitadelOrganization{ObjectMeta: metav1.ObjectMeta{Name: "helivanta-" + spec.TenantID, Namespace: "identity"}, Spec: spec}
+	project := &identity.ZitadelProject{ObjectMeta: metav1.ObjectMeta{Name: "helivanta", Namespace: "identity"}, Status: identity.ZitadelProjectStatus{ProjectID: "project", Conditions: []metav1.Condition{{Type: "Ready", Status: metav1.ConditionTrue, Reason: "Current", Message: "current"}}}}
+	kube := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(claim).WithObjects(claim, project).Build()
+	remote := &identityAPI{err: zitadelapi.ErrOwnerVerificationPending}
+	held := &archive{}
+	activate := &activation{}
+	reconciler := zitadelorganization.NewReconciler(kube, remote, held, map[string]string{"helivanta": "helivanta"}, activate)
+	key := types.NamespacedName{Namespace: claim.Namespace, Name: claim.Name}
+	if err := reconciler.Reconcile(t.Context(), key); err != nil {
+		t.Fatalf("verification must be visible pending, not workqueue failure: %v", err)
+	}
+	if err := kube.Get(t.Context(), key, claim); err != nil {
+		t.Fatal(err)
+	}
+	condition := meta.FindStatusCondition(claim.Status.Conditions, "Ready")
+	if condition == nil || condition.Status != metav1.ConditionFalse || condition.Reason != "OwnerVerificationPending" || claim.Status.Activated || activate.calls != 0 {
+		t.Fatalf("unsafe pending status: %+v activation=%d", claim.Status, activate.calls)
+	}
+	remote.err = nil
+	if err := reconciler.Reconcile(t.Context(), key); err != nil {
+		t.Fatal(err)
+	}
+	for _, payload := range held.payloads {
+		for _, private := range []string{"PrivateGiven", "PrivateFamily", "private@example.test", "initialAdmin:"} {
+			if strings.Contains(payload, private) {
+				t.Fatalf("held archive contains owner profile: %s", private)
+			}
+		}
+		if !strings.Contains(payload, "specFingerprint:") {
+			t.Fatal("held archive lacks immutable private-spec fingerprint")
+		}
+	}
+	if activate.calls != 1 {
+		t.Fatalf("activation calls=%d", activate.calls)
 	}
 }

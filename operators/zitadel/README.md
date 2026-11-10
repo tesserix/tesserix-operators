@@ -17,7 +17,11 @@ existing `zitadel` namespace. It exchanges its mounted Zitadel machine-key for
 short-lived management tokens. The live management key still comes from the
 transitional GCP source through External Secrets. Use OpenBao for new keys and
 retain independent recovery during cutover. Claims and status must never contain credentials,
-authorization codes, passkeys, MFA factors, or user identity data.
+authorization codes, passkeys or MFA factors. Private organization claims may
+carry the bounded first-owner profile described in
+[ADR 0004](docs/adr/0004-first-organization-owner.md); it must never enter public
+GitOps, logs or held archive payloads. Customer profile retention in Kubernetes
+requires the same access and offboarding controls as the private onboarding API.
 
 Expected control-plane scale is low (under ten reconciliations per minute, one
 small JSON request/response per operation). Reconciliation targets p99 under

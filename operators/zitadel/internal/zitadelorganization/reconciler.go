@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	identity "github.com/tesserix/devai-sandbox-operator/operators/zitadel/api/v1alpha1"
+	"github.com/tesserix/devai-sandbox-operator/operators/zitadel/internal/zitadelapi"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -69,6 +70,9 @@ func (r *Reconciler) Reconcile(ctx context.Context, key types.NamespacedName) (r
 	if !sourceID.MatchString(claim.Spec.InitialAdminUserID) || !ok || err != nil || tenant == uuid.Nil || tenant.String() != claim.Spec.TenantID || claim.Name != claim.Spec.Product+"-"+claim.Spec.TenantID || strings.TrimSpace(claim.Spec.DisplayName) == "" || len(claim.Spec.DisplayName) > 200 {
 		return errors.New("invalid or unreviewed product/tenant organization binding")
 	}
+	if err := claim.Spec.ValidateInitialAdmin(); err != nil {
+		return err
+	}
 	if claim.Spec.PreserveLoginPolicy && claim.Spec.OrganizationID == "" {
 		return errors.New("preserveLoginPolicy requires explicit adoption")
 	}
@@ -84,15 +88,24 @@ func (r *Reconciler) Reconcile(ctx context.Context, key types.NamespacedName) (r
 	}
 	// Only the typed spec enters the archive: annotations may contain arbitrary customer data.
 	intent := struct {
-		APIVersion string                           `json:"apiVersion"`
-		Kind       string                           `json:"kind"`
-		Spec       identity.ZitadelOrganizationSpec `json:"spec"`
-	}{identity.GroupVersion.String(), "ZitadelOrganization", claim.Spec}
+		APIVersion      string                           `json:"apiVersion"`
+		Kind            string                           `json:"kind"`
+		Spec            identity.ZitadelOrganizationSpec `json:"spec"`
+		SpecFingerprint string                           `json:"specFingerprint,omitempty"`
+	}{APIVersion: identity.GroupVersion.String(), Kind: "ZitadelOrganization", Spec: claim.Spec}
 	raw, err := yaml.Marshal(intent)
 	if err != nil {
 		return err
 	}
 	sum := sha256.Sum256(raw)
+	if claim.Spec.InitialAdmin != nil {
+		intent.Spec.InitialAdmin = nil
+		intent.SpecFingerprint = hex.EncodeToString(sum[:])
+		raw, err = yaml.Marshal(intent)
+		if err != nil {
+			return err
+		}
+	}
 	prefix := claim.Spec.Product + "/prod/tenants/" + claim.Spec.TenantID + "/revisions/" + hex.EncodeToString(sum[:])
 	alreadyArchived := claim.Status.ArchiveObject == prefix+"/identity.yaml" && claim.Status.ArchiveGeneration != "" && claim.Status.ObservedGeneration == claim.Generation
 	if !alreadyArchived {
@@ -101,6 +114,15 @@ func (r *Reconciler) Reconcile(ctx context.Context, key types.NamespacedName) (r
 		}
 	}
 	orgID, err := r.identity.EnsureOrganization(ctx, claim.Spec, project.Spec.Organization, project.Status.ProjectID)
+	if errors.Is(err, zitadelapi.ErrOwnerVerificationPending) && claim.Spec.InitialAdmin != nil {
+		if orgID == "" || (claim.Status.OrganizationID != "" && claim.Status.OrganizationID != orgID) {
+			return errors.New("organization identity changed")
+		}
+		claim.Status.OrganizationID = orgID
+		claim.Status.ProjectID = project.Status.ProjectID
+		meta.SetStatusCondition(&claim.Status.Conditions, metav1.Condition{Type: "Ready", Status: metav1.ConditionFalse, Reason: "OwnerVerificationPending", Message: "Waiting for the initial owner to verify their email with the identity provider", ObservedGeneration: claim.Generation})
+		return nil
+	}
 	if err != nil {
 		return fmt.Errorf("ensure organization: %w", err)
 	}
@@ -115,10 +137,11 @@ func (r *Reconciler) Reconcile(ctx context.Context, key types.NamespacedName) (r
 	}
 	claim.Status.Activated = true
 	receipt := struct {
-		Spec           identity.ZitadelOrganizationSpec `json:"spec"`
-		OrganizationID string                           `json:"organizationId"`
-		ProjectID      string                           `json:"projectId"`
-	}{claim.Spec, orgID, project.Status.ProjectID}
+		Spec            identity.ZitadelOrganizationSpec `json:"spec"`
+		OrganizationID  string                           `json:"organizationId"`
+		ProjectID       string                           `json:"projectId"`
+		SpecFingerprint string                           `json:"specFingerprint,omitempty"`
+	}{Spec: intent.Spec, OrganizationID: orgID, ProjectID: project.Status.ProjectID, SpecFingerprint: intent.SpecFingerprint}
 	raw, err = yaml.Marshal(receipt)
 	if err != nil {
 		return err
