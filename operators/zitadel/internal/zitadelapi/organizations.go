@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -264,6 +265,19 @@ func (c *Client) verifyOrganizationAdministrator(ctx context.Context, spec ident
 		}
 		if !user.Human.Email.IsVerified {
 			return ErrOwnerVerificationPending
+		}
+		var members struct {
+			Result []struct {
+				UserID string   `json:"userId"`
+				Roles  []string `json:"roles"`
+			} `json:"result"`
+		}
+		query := map[string]any{"query": map[string]any{"limit": 2}, "queries": []map[string]any{{"userIdQuery": map[string]string{"userId": spec.InitialAdminUserID}}}}
+		if err := c.request(ctx, http.MethodPost, "/management/v1/orgs/me/members/_search", orgID, query, &members); err != nil {
+			return err
+		}
+		if len(members.Result) != 1 || members.Result[0].UserID != spec.InitialAdminUserID || !slices.Contains(members.Result[0].Roles, "ORG_OWNER") {
+			return errors.New("first owner no longer holds native organization ownership")
 		}
 	} else if !user.Human.Email.IsVerified {
 		return errors.New("initial administrator must be an active verified human")

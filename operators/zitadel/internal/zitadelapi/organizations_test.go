@@ -163,11 +163,15 @@ func TestNewOrganizationRecoversLostCreateResponseWithoutDuplicatingOwner(t *tes
 
 func TestFirstOwnerCreationWaitsForNativeEmailVerification(t *testing.T) {
 	for _, lost := range []bool{false, true} {
-		t.Run(fmt.Sprintf("lost_create_response=%v", lost), func(t *testing.T) { testFirstOwnerCreation(t, lost) })
+		t.Run(fmt.Sprintf("lost_create_response=%v", lost), func(t *testing.T) { testFirstOwnerCreation(t, lost, false) })
 	}
 }
 
-func testFirstOwnerCreation(t *testing.T, lost bool) {
+func TestFirstOwnerCannotActivateAfterNativeOwnershipWasRemoved(t *testing.T) {
+	testFirstOwnerCreation(t, false, true)
+}
+
+func testFirstOwnerCreation(t *testing.T, lost, revoked bool) {
 	t.Helper()
 	tenant := "11111111-1111-4111-8111-111111111111"
 	orgID, userID := "helivanta-"+tenant, "owner-"+tenant
@@ -226,6 +230,15 @@ func testFirstOwnerCreation(t *testing.T, lost bool) {
 				return
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"user": map[string]any{"userId": userID, "details": map[string]string{"resourceOwner": orgID}, "state": "USER_STATE_ACTIVE", "human": map[string]any{"email": map[string]any{"email": "owner@example.test", "isVerified": verified}}}})
+		case "/management/v1/orgs/me/members/_search":
+			if r.Header.Get("X-Zitadel-Orgid") != orgID {
+				t.Error("owner membership query was not organization-scoped")
+			}
+			if revoked {
+				_, _ = fmt.Fprint(w, `{}`)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"result": []map[string]any{{"userId": userID, "roles": []string{"ORG_OWNER"}}}})
 		case "/management/v1/metadata/tenant_id":
 			_ = json.NewEncoder(w).Encode(map[string]any{"metadata": map[string]string{"key": "tenant_id", "value": base64.StdEncoding.EncodeToString([]byte(tenant))}})
 		case "/v2/organizations/_search":
@@ -259,6 +272,12 @@ func testFirstOwnerCreation(t *testing.T, lost bool) {
 	}
 	verified = true
 	got, err := c.EnsureOrganization(t.Context(), spec, "TESSERIX", "project")
+	if revoked {
+		if err == nil || creates != 1 || grants != 0 {
+			t.Fatalf("revoked native owner activated: err=%v creates=%d grants=%d", err, creates, grants)
+		}
+		return
+	}
 	if err != nil || got != orgID || creates != 1 || grants != 1 {
 		t.Fatalf("verified replay: id=%s err=%v creates=%d grants=%d", got, err, creates, grants)
 	}
