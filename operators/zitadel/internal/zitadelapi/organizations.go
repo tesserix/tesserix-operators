@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -24,22 +25,13 @@ func (c *Client) EnsureOrganization(ctx context.Context, spec identity.ZitadelOr
 	if !organizationSourceID.MatchString(spec.InitialAdminUserID) {
 		return "", errors.New("initial administrator must be an existing Zitadel human")
 	}
-	var administrator struct {
-		User struct {
-			UserID string `json:"userId"`
-			State  string `json:"state"`
-			Human  *struct {
-				Email struct {
-					IsVerified bool `json:"isVerified"`
-				} `json:"email"`
-			} `json:"human"`
-		} `json:"user"`
-	}
-	if err := c.request(ctx, http.MethodGet, "/v2/users/"+url.PathEscape(spec.InitialAdminUserID), "", nil, &administrator); err != nil {
+	if err := spec.ValidateInitialAdmin(); err != nil {
 		return "", err
 	}
-	if administrator.User.UserID != spec.InitialAdminUserID || administrator.User.State != "USER_STATE_ACTIVE" || administrator.User.Human == nil || !administrator.User.Human.Email.IsVerified {
-		return "", errors.New("initial administrator must be an active verified human")
+	if spec.InitialAdmin == nil {
+		if err := c.verifyOrganizationAdministrator(ctx, spec, ""); err != nil {
+			return "", err
+		}
 	}
 	id := spec.OrganizationID
 	if id == "" {
@@ -64,7 +56,12 @@ func (c *Client) EnsureOrganization(ctx context.Context, spec identity.ZitadelOr
 		var created struct {
 			ID string `json:"organizationId"`
 		}
-		if err = c.request(ctx, http.MethodPost, "/v2/organizations", "", map[string]any{"organizationId": id, "name": spec.DisplayName, "admins": []map[string]any{{"userId": spec.InitialAdminUserID, "roles": []string{"ORG_OWNER"}}}}, &created); err != nil {
+		admin := map[string]any{"userId": spec.InitialAdminUserID, "roles": []string{"ORG_OWNER"}}
+		if profile := spec.InitialAdmin; profile != nil {
+			delete(admin, "userId")
+			admin["human"] = map[string]any{"userId": spec.InitialAdminUserID, "profile": map[string]string{"givenName": profile.GivenName, "familyName": profile.FamilyName}, "email": map[string]any{"email": profile.Email, "sendCode": map[string]any{}}}
+		}
+		if err = c.request(ctx, http.MethodPost, "/v2/organizations", "", map[string]any{"organizationId": id, "name": spec.DisplayName, "admins": []map[string]any{admin}}, &created); err != nil {
 			return "", err
 		}
 		if created.ID != id {
@@ -77,6 +74,11 @@ func (c *Client) EnsureOrganization(ctx context.Context, spec identity.ZitadelOr
 	}
 	if found.Org.ID != id || found.Org.Name != spec.DisplayName || found.Org.State != "ORG_STATE_ACTIVE" {
 		return "", errors.New("organization name, state or identity does not match")
+	}
+	if spec.InitialAdmin != nil {
+		if err := c.verifyOrganizationAdministrator(ctx, spec, id); err != nil {
+			return id, err
+		}
 	}
 	var metadata struct {
 		Metadata struct {
@@ -229,4 +231,56 @@ func (c *Client) ensureHospitalDomainPolicy(ctx context.Context, orgID string) e
 		method = http.MethodPost
 	}
 	return c.request(ctx, method, path, "", map[string]bool{"validateOrgDomains": true, "userLoginMustBeDomain": current.Policy.UserLoginMustBeDomain, "smtpSenderAddressMatchesInstanceDomain": current.Policy.SMTPSenderMatches}, nil)
+}
+
+// ErrOwnerVerificationPending means the native first owner has not verified email yet.
+var ErrOwnerVerificationPending = errors.New("first owner email verification pending")
+
+func (c *Client) verifyOrganizationAdministrator(ctx context.Context, spec identity.ZitadelOrganizationSpec, orgID string) error {
+	var response struct {
+		User struct {
+			UserID  string `json:"userId"`
+			State   string `json:"state"`
+			Details struct {
+				ResourceOwner string `json:"resourceOwner"`
+			} `json:"details"`
+			Human *struct {
+				Email struct {
+					Email      string `json:"email"`
+					IsVerified bool   `json:"isVerified"`
+				} `json:"email"`
+			} `json:"human"`
+		} `json:"user"`
+	}
+	if err := c.request(ctx, http.MethodGet, "/v2/users/"+url.PathEscape(spec.InitialAdminUserID), "", nil, &response); err != nil {
+		return err
+	}
+	user := response.User
+	if user.UserID != spec.InitialAdminUserID || user.State != "USER_STATE_ACTIVE" || user.Human == nil {
+		return errors.New("initial administrator must be an active human")
+	}
+	if spec.InitialAdmin != nil {
+		if user.Details.ResourceOwner != orgID || user.Human.Email.Email != spec.InitialAdmin.Email {
+			return errors.New("first owner organization or email does not match")
+		}
+		if !user.Human.Email.IsVerified {
+			return ErrOwnerVerificationPending
+		}
+		var members struct {
+			Result []struct {
+				UserID string   `json:"userId"`
+				Roles  []string `json:"roles"`
+			} `json:"result"`
+		}
+		query := map[string]any{"query": map[string]any{"limit": 2}, "queries": []map[string]any{{"userIdQuery": map[string]string{"userId": spec.InitialAdminUserID}}}}
+		if err := c.request(ctx, http.MethodPost, "/management/v1/orgs/me/members/_search", orgID, query, &members); err != nil {
+			return err
+		}
+		if len(members.Result) != 1 || members.Result[0].UserID != spec.InitialAdminUserID || !slices.Contains(members.Result[0].Roles, "ORG_OWNER") {
+			return errors.New("first owner no longer holds native organization ownership")
+		}
+	} else if !user.Human.Email.IsVerified {
+		return errors.New("initial administrator must be an active verified human")
+	}
+	return nil
 }

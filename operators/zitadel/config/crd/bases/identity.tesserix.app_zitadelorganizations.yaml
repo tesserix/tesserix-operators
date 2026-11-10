@@ -33,7 +33,16 @@ spec:
                   message: Hospital identity bindings are immutable; use a reviewed migration.
                 - rule: '!has(self.preserveLoginPolicy) || !self.preserveLoginPolicy || has(self.organizationId)'
                   message: Policy preservation is adoption-only.
+                - rule: '!has(self.initialAdmin) || (!has(self.organizationId) && (!has(self.preserveLoginPolicy) || !self.preserveLoginPolicy) && self.initialAdminUserId == "owner-" + self.tenantId)'
+                  message: A new owner requires a new organization and a tenant-bound subject.
               properties:
+                initialAdmin:
+                  type: object
+                  required: [givenName, familyName, email]
+                  properties:
+                    givenName: {type: string, minLength: 1, maxLength: 200}
+                    familyName: {type: string, minLength: 1, maxLength: 200}
+                    email: {type: string, minLength: 3, maxLength: 200}
                 initialAdminUserId:
                   type: string
                   pattern: '^[A-Za-z0-9_-]{1,200}$'
