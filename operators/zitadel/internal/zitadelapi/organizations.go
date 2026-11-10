@@ -59,7 +59,11 @@ func (c *Client) EnsureOrganization(ctx context.Context, spec identity.ZitadelOr
 		admin := map[string]any{"userId": spec.InitialAdminUserID, "roles": []string{"ORG_OWNER"}}
 		if profile := spec.InitialAdmin; profile != nil {
 			delete(admin, "userId")
-			admin["human"] = map[string]any{"userId": spec.InitialAdminUserID, "profile": map[string]string{"givenName": profile.GivenName, "familyName": profile.FamilyName}, "email": map[string]any{"email": profile.Email, "sendCode": map[string]any{}}}
+			sendCode := map[string]any{}
+			if spec.Product == "helivanta" {
+				sendCode["urlTemplate"] = "https://helivanta.app/signup/verify#phase=email&userId={{.UserID}}&code={{.Code}}"
+			}
+			admin["human"] = map[string]any{"userId": spec.InitialAdminUserID, "profile": map[string]string{"givenName": profile.GivenName, "familyName": profile.FamilyName}, "email": map[string]any{"email": profile.Email, "sendCode": sendCode}}
 		}
 		if err = c.request(ctx, http.MethodPost, "/v2/organizations", "", map[string]any{"organizationId": id, "name": spec.DisplayName, "admins": []map[string]any{admin}}, &created); err != nil {
 			return "", err

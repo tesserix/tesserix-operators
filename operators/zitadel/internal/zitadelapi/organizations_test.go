@@ -214,6 +214,10 @@ func testFirstOwnerCreation(t *testing.T, lost, revoked bool) {
 				t.Error("first owner must be an inline human")
 			}
 			email, ok := admin.Human["email"].(map[string]any)
+			sendCode, _ := email["sendCode"].(map[string]any)
+			if sendCode["urlTemplate"] != "https://helivanta.app/signup/verify#phase=email&userId={{.UserID}}&code={{.Code}}" {
+				t.Error("owner email does not return to the Helivanta verification screen")
+			}
 			if !ok || email["email"] != "owner@example.test" || email["sendCode"] == nil || email["isVerified"] != nil || email["returnCode"] != nil || admin.Human["password"] != nil {
 				t.Error("unsafe email verification/password provisioning")
 			}
