@@ -24,6 +24,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -152,7 +153,7 @@ func main() {
 			panic(err)
 		}
 		organizations := zitadelorganization.NewReconciler(manager.GetClient(), projects, archive, productProjects, activation)
-		if err := ctrl.NewControllerManagedBy(manager).For(&identityv1alpha1.ZitadelOrganization{}).WithEventFilter(predicate.GenerationChangedPredicate{}).Complete(periodicReconciler(manager.GetClient(), &identityv1alpha1.ZitadelOrganization{}, organizations.Reconcile)); err != nil {
+		if err := ctrl.NewControllerManagedBy(manager).For(&identityv1alpha1.ZitadelOrganization{}).WithEventFilter(organizationEvents()).Complete(periodicReconciler(manager.GetClient(), &identityv1alpha1.ZitadelOrganization{}, organizations.Reconcile)); err != nil {
 			panic(err)
 		}
 	}
@@ -304,4 +305,15 @@ func reviewedConsumerProviderPaths(pairs string) (map[string]string, error) {
 		}
 	}
 	return reviewedMachineUserPaths(pairs)
+}
+
+func organizationEvents() predicate.Predicate {
+	return predicate.Or(predicate.GenerationChangedPredicate{}, predicate.Funcs{UpdateFunc: func(e event.UpdateEvent) bool {
+		if e.ObjectOld == nil || e.ObjectNew == nil {
+			return false
+		}
+		before := e.ObjectOld.GetAnnotations()[identityv1alpha1.OrganizationReconcileRequestAnnotation]
+		after := e.ObjectNew.GetAnnotations()[identityv1alpha1.OrganizationReconcileRequestAnnotation]
+		return after != "" && after != before
+	}})
 }

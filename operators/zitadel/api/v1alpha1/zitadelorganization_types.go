@@ -11,6 +11,9 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
+// OrganizationReconcileRequestAnnotation requests a refresh without changing identity intent.
+const OrganizationReconcileRequestAnnotation = "identity.tesserix.app/reconcile-request"
+
 // ZitadelOrganizationSpec binds a private customer tenant to one product.
 type ZitadelOrganizationSpec struct {
 	InitialAdminUserID string                    `json:"initialAdminUserId"`
