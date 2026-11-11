@@ -29,6 +29,8 @@ spec:
               type: object
               required: [product, tenantId, displayName, initialAdminUserId]
               x-kubernetes-validations:
+                - rule: '!has(self.externalInitialAdminEmail) || !self.externalInitialAdminEmail || (self.product == "helivanta" && has(self.initialAdmin))'
+                  message: External owner email requires a new Helivanta owner.
                 - rule: self == oldSelf
                   message: Hospital identity bindings are immutable; use a reviewed migration.
                 - rule: '!has(self.preserveLoginPolicy) || !self.preserveLoginPolicy || has(self.organizationId)'
@@ -36,6 +38,8 @@ spec:
                 - rule: '!has(self.initialAdmin) || (!has(self.organizationId) && (!has(self.preserveLoginPolicy) || !self.preserveLoginPolicy) && self.initialAdminUserId == "owner-" + self.tenantId)'
                   message: A new owner requires a new organization and a tenant-bound subject.
               properties:
+                externalInitialAdminEmail:
+                  type: boolean
                 initialAdmin:
                   type: object
                   required: [givenName, familyName, email]

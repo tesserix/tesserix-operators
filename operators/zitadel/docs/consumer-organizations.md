@@ -110,3 +110,13 @@ callback. Validate those with a test mailbox and product client before advertisi
 the capability. Existing Helivanta staff claims must not be repurposed as consumer
 claims. Keep patient identity and clinical authorization separate from mailbox
 verification.
+# Product email delivery
+
+New Helivanta claims may set immutable `externalInitialAdminEmail: true` with
+`initialAdmin`. In this mode native identity generates the initial verification
+code without sending through instance-wide SMTP. The operator discards the code;
+the onboarding service requests and delivers its own native code using its
+product-scoped sending credential. Native identity still verifies every code.
+Codes never enter claim status, archives or logs. Other products and existing
+users retain their existing behavior. Deploy the CRD and operator before enabling
+the onboarding mailer; a dry-run claim must preserve the new field.

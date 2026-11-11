@@ -2,7 +2,7 @@ ARG BUILDER_IMAGE=ghcr.io/tesserix/base-go-builder:weekly@sha256:3e00161f419a8fd
 ARG RUNTIME_IMAGE=ghcr.io/tesserix/base-distroless-static:weekly@sha256:a0ada4bf3d50447e7bbc3bf95f872ade97dd85feba81e7b4facf8e9fab665594
 
 FROM ${BUILDER_IMAGE} AS build
-ARG GO_VERSION=1.27.3
+ARG GO_VERSION=1.27.4
 ENV GOTOOLCHAIN=go${GO_VERSION}
 WORKDIR /workspace
 COPY go.mod go.sum ./
