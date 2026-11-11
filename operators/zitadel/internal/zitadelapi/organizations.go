@@ -42,9 +42,9 @@ func (c *Client) EnsureOrganization(ctx context.Context, spec identity.ZitadelOr
 	}
 	nativeName := spec.DisplayName
 	if spec.Product == "helivanta" && spec.InitialAdmin != nil {
-		suffix := " [" + spec.TenantID + "]"
+		prefix := "[" + spec.TenantID + "] "
 		display := []rune(spec.DisplayName)
-		nativeName = string(display[:min(len(display), 200-len([]rune(suffix)))]) + suffix
+		nativeName = prefix + string(display[:min(len(display), 200-len([]rune(prefix)))])
 	}
 	var found struct {
 		Org struct {

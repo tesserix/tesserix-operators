@@ -9,6 +9,7 @@ import (
 	"github.com/tesserix/devai-sandbox-operator/operators/zitadel/internal/zitadelapi"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -171,7 +172,11 @@ func TestFirstOwnerCannotActivateAfterNativeOwnershipWasRemoved(t *testing.T) {
 	testFirstOwnerCreation(t, false, true, false)
 }
 
-func testFirstOwnerCreation(t *testing.T, lost, revoked, external bool) {
+func testFirstOwnerCreation(t *testing.T, lost, revoked, external bool, displayNames ...string) {
+	displayName := "TEST Hospital"
+	if len(displayNames) > 0 {
+		displayName = displayNames[0]
+	}
 	t.Helper()
 	tenant := "11111111-1111-4111-8111-111111111111"
 	orgID, userID := "helivanta-"+tenant, "owner-"+tenant
@@ -179,6 +184,7 @@ func testFirstOwnerCreation(t *testing.T, lost, revoked, external bool) {
 	if err := json.Unmarshal([]byte(fmt.Sprintf(`{"product":"helivanta","tenantId":%q,"displayName":"TEST Hospital","initialAdminUserId":%q,"initialAdmin":{"givenName":"Test","familyName":"Owner","email":"owner@example.test"}}`, tenant, userID)), &spec); err != nil {
 		t.Fatal(err)
 	}
+	spec.DisplayName = displayName
 	if external {
 		raw, err := json.Marshal(spec)
 		if err != nil {
@@ -206,7 +212,7 @@ func testFirstOwnerCreation(t *testing.T, lost, revoked, external bool) {
 				w.WriteHeader(404)
 				return
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"org": map[string]any{"id": orgID, "name": "TEST Hospital", "state": "ORG_STATE_ACTIVE"}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"org": map[string]any{"id": orgID, "name": displayName, "state": "ORG_STATE_ACTIVE"}})
 		case "/v2/organizations":
 			creates++
 			var body struct {
@@ -228,7 +234,7 @@ func testFirstOwnerCreation(t *testing.T, lost, revoked, external bool) {
 				w.WriteHeader(500)
 				return
 			}
-			if body.Name != "TEST Hospital ["+tenant+"]" {
+			if !strings.HasPrefix(body.Name, "["+tenant+"] ") || len([]rune(body.Name)) > 200 {
 				t.Error("fresh native organization name must be tenant-unique")
 			}
 			admin := body.Admins[0]
@@ -373,4 +379,8 @@ func TestExternalHelivantaEmailSuppressesSharedSMTPOnCreationAndReplay(t *testin
 	for _, lost := range []bool{false, true} {
 		t.Run(fmt.Sprintf("lost=%v", lost), func(t *testing.T) { testFirstOwnerCreation(t, lost, false, true) })
 	}
+}
+
+func TestFreshOwnerOrgNameKeepsTenantUUIDAheadOfNativeDomainTruncation(t *testing.T) {
+	testFirstOwnerCreation(t, false, false, false, "Hospital "+strings.Repeat("x", 191))
 }
