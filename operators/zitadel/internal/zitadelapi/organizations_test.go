@@ -211,6 +211,7 @@ func testFirstOwnerCreation(t *testing.T, lost, revoked, external bool) {
 			creates++
 			var body struct {
 				OrganizationID string `json:"organizationId"`
+				Name           string `json:"name"`
 				Admins         []struct {
 					UserID string         `json:"userId"`
 					Human  map[string]any `json:"human"`
@@ -226,6 +227,9 @@ func testFirstOwnerCreation(t *testing.T, lost, revoked, external bool) {
 				t.Error("missing deterministic organization/owner")
 				w.WriteHeader(500)
 				return
+			}
+			if body.Name != "TEST Hospital ["+tenant+"]" {
+				t.Error("fresh native organization name must be tenant-unique")
 			}
 			admin := body.Admins[0]
 			if admin.UserID != "" || admin.Human["userId"] != userID || len(admin.Roles) != 1 || admin.Roles[0] != "ORG_OWNER" {

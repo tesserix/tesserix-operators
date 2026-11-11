@@ -40,6 +40,12 @@ func (c *Client) EnsureOrganization(ctx context.Context, spec identity.ZitadelOr
 	if !organizationSourceID.MatchString(id) {
 		return "", errors.New("invalid organization id")
 	}
+	nativeName := spec.DisplayName
+	if spec.Product == "helivanta" && spec.InitialAdmin != nil {
+		suffix := " [" + spec.TenantID + "]"
+		display := []rune(spec.DisplayName)
+		nativeName = string(display[:min(len(display), 200-len([]rune(suffix)))]) + suffix
+	}
 	var found struct {
 		Org struct {
 			ID    string `json:"id"`
@@ -70,7 +76,7 @@ func (c *Client) EnsureOrganization(ctx context.Context, spec identity.ZitadelOr
 			}
 			admin["human"] = map[string]any{"userId": spec.InitialAdminUserID, "username": spec.InitialAdminUserID, "profile": map[string]string{"givenName": profile.GivenName, "familyName": profile.FamilyName}, "email": email}
 		}
-		if err = c.request(ctx, http.MethodPost, "/v2/organizations", "", map[string]any{"organizationId": id, "name": spec.DisplayName, "admins": []map[string]any{admin}}, &created); err != nil {
+		if err = c.request(ctx, http.MethodPost, "/v2/organizations", "", map[string]any{"organizationId": id, "name": nativeName, "admins": []map[string]any{admin}}, &created); err != nil {
 			return "", err
 		}
 		if created.ID != id {
@@ -81,7 +87,7 @@ func (c *Client) EnsureOrganization(ctx context.Context, spec identity.ZitadelOr
 			return "", err
 		}
 	}
-	if found.Org.ID != id || found.Org.Name != spec.DisplayName || found.Org.State != "ORG_STATE_ACTIVE" {
+	if found.Org.ID != id || (found.Org.Name != nativeName && found.Org.Name != spec.DisplayName) || found.Org.State != "ORG_STATE_ACTIVE" {
 		return "", errors.New("organization name, state or identity does not match")
 	}
 	if spec.InitialAdmin != nil {
