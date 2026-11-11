@@ -16,12 +16,13 @@ const OrganizationReconcileRequestAnnotation = "identity.tesserix.app/reconcile-
 
 // ZitadelOrganizationSpec binds a private customer tenant to one product.
 type ZitadelOrganizationSpec struct {
-	InitialAdminUserID string                    `json:"initialAdminUserId"`
-	InitialAdmin       *OrganizationInitialAdmin `json:"initialAdmin,omitempty"`
-	Product            string                    `json:"product"`
-	TenantID           string                    `json:"tenantId"`
-	DisplayName        string                    `json:"displayName"`
-	OrganizationID     string                    `json:"organizationId,omitempty"`
+	InitialAdminUserID        string                    `json:"initialAdminUserId"`
+	InitialAdmin              *OrganizationInitialAdmin `json:"initialAdmin,omitempty"`
+	ExternalInitialAdminEmail bool                      `json:"externalInitialAdminEmail,omitempty"`
+	Product                   string                    `json:"product"`
+	TenantID                  string                    `json:"tenantId"`
+	DisplayName               string                    `json:"displayName"`
+	OrganizationID            string                    `json:"organizationId,omitempty"`
 	// PreserveLoginPolicy is an adoption-only escape hatch for a staged MFA cutover.
 	PreserveLoginPolicy bool `json:"preserveLoginPolicy,omitempty"`
 }
@@ -35,6 +36,9 @@ type OrganizationInitialAdmin struct {
 
 // ValidateInitialAdmin rejects ambiguous first-owner and adoption modes.
 func (s ZitadelOrganizationSpec) ValidateInitialAdmin() error {
+	if s.ExternalInitialAdminEmail && (s.Product != "helivanta" || s.InitialAdmin == nil) {
+		return errors.New("external owner email requires a new Helivanta owner")
+	}
 	if s.InitialAdmin == nil {
 		return nil
 	}

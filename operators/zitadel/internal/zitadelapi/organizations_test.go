@@ -163,21 +163,39 @@ func TestNewOrganizationRecoversLostCreateResponseWithoutDuplicatingOwner(t *tes
 
 func TestFirstOwnerCreationWaitsForNativeEmailVerification(t *testing.T) {
 	for _, lost := range []bool{false, true} {
-		t.Run(fmt.Sprintf("lost_create_response=%v", lost), func(t *testing.T) { testFirstOwnerCreation(t, lost, false) })
+		t.Run(fmt.Sprintf("lost_create_response=%v", lost), func(t *testing.T) { testFirstOwnerCreation(t, lost, false, false) })
 	}
 }
 
 func TestFirstOwnerCannotActivateAfterNativeOwnershipWasRemoved(t *testing.T) {
-	testFirstOwnerCreation(t, false, true)
+	testFirstOwnerCreation(t, false, true, false)
 }
 
-func testFirstOwnerCreation(t *testing.T, lost, revoked bool) {
+func testFirstOwnerCreation(t *testing.T, lost, revoked, external bool) {
 	t.Helper()
 	tenant := "11111111-1111-4111-8111-111111111111"
 	orgID, userID := "helivanta-"+tenant, "owner-"+tenant
 	var spec identity.ZitadelOrganizationSpec
 	if err := json.Unmarshal([]byte(fmt.Sprintf(`{"product":"helivanta","tenantId":%q,"displayName":"TEST Hospital","initialAdminUserId":%q,"initialAdmin":{"givenName":"Test","familyName":"Owner","email":"owner@example.test"}}`, tenant, userID)), &spec); err != nil {
 		t.Fatal(err)
+	}
+	if external {
+		raw, err := json.Marshal(spec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var fields map[string]any
+		if err := json.Unmarshal(raw, &fields); err != nil {
+			t.Fatal(err)
+		}
+		fields["externalInitialAdminEmail"] = true
+		raw, err = json.Marshal(fields)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(raw, &spec); err != nil {
+			t.Fatal(err)
+		}
 	}
 	created, verified := false, false
 	creates, grants := 0, 0
@@ -214,12 +232,18 @@ func testFirstOwnerCreation(t *testing.T, lost, revoked bool) {
 				t.Error("first owner must be an inline human")
 			}
 			email, ok := admin.Human["email"].(map[string]any)
-			sendCode, _ := email["sendCode"].(map[string]any)
-			if sendCode["urlTemplate"] != "https://helivanta.app/signup/verify#phase=email&userId={{.UserID}}&code={{.Code}}" {
-				t.Error("owner email does not return to the Helivanta verification screen")
-			}
-			if !ok || email["email"] != "owner@example.test" || email["sendCode"] == nil || email["isVerified"] != nil || email["returnCode"] != nil || admin.Human["password"] != nil {
+			if !ok || email["email"] != "owner@example.test" || email["isVerified"] != nil || admin.Human["password"] != nil {
 				t.Error("unsafe email verification/password provisioning")
+			}
+			if external {
+				if email["returnCode"] == nil || email["sendCode"] != nil {
+					t.Error("external delivery triggered shared SMTP")
+				}
+			} else {
+				sendCode, _ := email["sendCode"].(map[string]any)
+				if sendCode["urlTemplate"] != "https://helivanta.app/signup/verify#phase=email&userId={{.UserID}}&code={{.Code}}" || email["returnCode"] != nil {
+					t.Error("native delivery lost Helivanta verification link")
+				}
 			}
 			created = true
 			if lost {
@@ -335,5 +359,11 @@ func TestFirstOwnerRejectsForeignOrUnavailableIdentityWithoutWrites(t *testing.T
 				t.Fatalf("unsafe owner accepted: err=%v writes=%d", err, writes)
 			}
 		})
+	}
+}
+
+func TestExternalHelivantaEmailSuppressesSharedSMTPOnCreationAndReplay(t *testing.T) {
+	for _, lost := range []bool{false, true} {
+		t.Run(fmt.Sprintf("lost=%v", lost), func(t *testing.T) { testFirstOwnerCreation(t, lost, false, true) })
 	}
 }

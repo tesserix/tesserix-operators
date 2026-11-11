@@ -1,10 +1,46 @@
 package v1alpha1_test
 
 import (
+	"encoding/json"
 	identity "github.com/tesserix/devai-sandbox-operator/operators/zitadel/api/v1alpha1"
 	"strings"
 	"testing"
 )
+
+func TestExternalEmailRequiresNewHelivantaOwner(t *testing.T) {
+	for _, tc := range []struct {
+		product  string
+		existing bool
+		valid    bool
+	}{
+		{"helivanta", false, true}, {"other", false, false}, {"helivanta", true, false},
+	} {
+		s := firstOwnerSpec()
+		s.Product = tc.product
+		if tc.existing {
+			s.InitialAdmin = nil
+		}
+		raw, err := json.Marshal(s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var fields map[string]any
+		if err := json.Unmarshal(raw, &fields); err != nil {
+			t.Fatal(err)
+		}
+		fields["externalInitialAdminEmail"] = true
+		raw, err = json.Marshal(fields)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(raw, &s); err != nil {
+			t.Fatal(err)
+		}
+		if (s.ValidateInitialAdmin() == nil) != tc.valid {
+			t.Fatalf("incorrect external email validation: %+v", tc)
+		}
+	}
+}
 
 func TestInitialAdminProfileRejectsAmbiguousModesAndUnsafeContact(t *testing.T) {
 	for _, tc := range []struct {
