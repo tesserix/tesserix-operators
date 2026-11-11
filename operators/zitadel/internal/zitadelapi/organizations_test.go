@@ -231,6 +231,9 @@ func testFirstOwnerCreation(t *testing.T, lost, revoked, external bool) {
 			if admin.UserID != "" || admin.Human["userId"] != userID || len(admin.Roles) != 1 || admin.Roles[0] != "ORG_OWNER" {
 				t.Error("first owner must be an inline human")
 			}
+			if admin.Human["username"] != userID {
+				t.Error("first owner login must be tenant-unique, independent of email")
+			}
 			email, ok := admin.Human["email"].(map[string]any)
 			if !ok || email["email"] != "owner@example.test" || email["isVerified"] != nil || admin.Human["password"] != nil {
 				t.Error("unsafe email verification/password provisioning")

@@ -68,7 +68,7 @@ func (c *Client) EnsureOrganization(ctx context.Context, spec identity.ZitadelOr
 				delete(email, "sendCode")
 				email["returnCode"] = map[string]any{}
 			}
-			admin["human"] = map[string]any{"userId": spec.InitialAdminUserID, "profile": map[string]string{"givenName": profile.GivenName, "familyName": profile.FamilyName}, "email": email}
+			admin["human"] = map[string]any{"userId": spec.InitialAdminUserID, "username": spec.InitialAdminUserID, "profile": map[string]string{"givenName": profile.GivenName, "familyName": profile.FamilyName}, "email": email}
 		}
 		if err = c.request(ctx, http.MethodPost, "/v2/organizations", "", map[string]any{"organizationId": id, "name": spec.DisplayName, "admins": []map[string]any{admin}}, &created); err != nil {
 			return "", err
