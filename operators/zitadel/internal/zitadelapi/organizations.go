@@ -8,7 +8,10 @@ import (
 	"net/url"
 	"regexp"
 	"slices"
+	"strconv"
+	"strings"
 	"time"
+	"unicode"
 
 	"github.com/google/uuid"
 	identity "github.com/tesserix/devai-sandbox-operator/operators/zitadel/api/v1alpha1"
@@ -41,10 +44,9 @@ func (c *Client) EnsureOrganization(ctx context.Context, spec identity.ZitadelOr
 		return "", errors.New("invalid organization id")
 	}
 	nativeName := spec.DisplayName
-	if spec.Product == "helivanta" && spec.InitialAdmin != nil {
-		prefix := "[" + spec.TenantID + "] "
-		display := []rune(spec.DisplayName)
-		nativeName = prefix + string(display[:min(len(display), 200-len([]rune(prefix)))])
+	readableName := spec.Product == "helivanta" && spec.InitialAdmin != nil
+	if readableName {
+		nativeName = helivantaOrganizationName(spec.DisplayName, 1)
 	}
 	var found struct {
 		Org struct {
@@ -58,9 +60,6 @@ func (c *Client) EnsureOrganization(ctx context.Context, spec identity.ZitadelOr
 		var status *statusError
 		if !errors.As(err, &status) || status.code != http.StatusNotFound || spec.OrganizationID != "" {
 			return "", err
-		}
-		var created struct {
-			ID string `json:"organizationId"`
 		}
 		admin := map[string]any{"userId": spec.InitialAdminUserID, "roles": []string{"ORG_OWNER"}}
 		if profile := spec.InitialAdmin; profile != nil {
@@ -76,18 +75,48 @@ func (c *Client) EnsureOrganization(ctx context.Context, spec identity.ZitadelOr
 			}
 			admin["human"] = map[string]any{"userId": spec.InitialAdminUserID, "username": spec.InitialAdminUserID, "profile": map[string]string{"givenName": profile.GivenName, "familyName": profile.FamilyName}, "email": email}
 		}
-		if err = c.request(ctx, http.MethodPost, "/v2/organizations", "", map[string]any{"organizationId": id, "name": nativeName, "admins": []map[string]any{admin}}, &created); err != nil {
-			return "", err
-		}
-		if created.ID != id {
-			return "", errors.New("created organization id does not match deterministic binding")
-		}
-		// A replay reads the same deterministic ID, including after a lost create response.
-		if err = c.request(ctx, http.MethodGet, "/admin/v1/orgs/"+url.PathEscape(id), "", nil, &found); err != nil {
-			return "", err
+		for attempt := 1; ; attempt++ {
+			var created struct {
+				ID string `json:"organizationId"`
+			}
+			err = c.request(ctx, http.MethodPost, "/v2/organizations", "", map[string]any{"organizationId": id, "name": nativeName, "admins": []map[string]any{admin}}, &created)
+			if err == nil && created.ID != id {
+				return "", errors.New("created organization id does not match deterministic binding")
+			}
+			if err != nil && (!readableName || !errors.As(err, &status) || status.code != http.StatusConflict) {
+				return "", err
+			}
+			// Resolve our immutable ID before treating a concurrent create as a name collision.
+			lookupErr := c.request(ctx, http.MethodGet, "/admin/v1/orgs/"+url.PathEscape(id), "", nil, &found)
+			if lookupErr == nil {
+				break
+			}
+			if err == nil || !errors.As(lookupErr, &status) || status.code != http.StatusNotFound {
+				return "", lookupErr
+			}
+			collision, lookupErr := c.organizationDomainTaken(ctx, nativeName, id)
+			if lookupErr != nil {
+				return "", lookupErr
+			}
+			if !collision {
+				return "", err
+			}
+			if attempt == helivantaOrganizationNameLimit {
+				return "", errors.New("readable organization names exhausted; choose a more specific workspace name")
+			}
+			nativeName = helivantaOrganizationName(spec.DisplayName, attempt+1)
 		}
 	}
-	if found.Org.ID != id || (found.Org.Name != nativeName && found.Org.Name != spec.DisplayName) || found.Org.State != "ORG_STATE_ACTIVE" {
+	nameMatches := found.Org.Name == nativeName || found.Org.Name == spec.DisplayName
+	if readableName {
+		prefix := "[" + spec.TenantID + "] "
+		display := []rune(spec.DisplayName)
+		nameMatches = nameMatches || found.Org.Name == prefix+string(display[:min(len(display), 200-len([]rune(prefix)))])
+		for attempt := 2; !nameMatches && attempt <= helivantaOrganizationNameLimit; attempt++ {
+			nameMatches = found.Org.Name == helivantaOrganizationName(spec.DisplayName, attempt)
+		}
+	}
+	if found.Org.ID != id || !nameMatches || found.Org.State != "ORG_STATE_ACTIVE" {
 		return "", errors.New("organization name, state or identity does not match")
 	}
 	if spec.InitialAdmin != nil {
@@ -159,6 +188,61 @@ func (c *Client) EnsureOrganization(ctx context.Context, spec identity.ZitadelOr
 		return "", err
 	}
 	return id, nil
+}
+
+const helivantaOrganizationNameLimit = 25
+
+func helivantaOrganizationName(display string, ordinal int) string {
+	var name strings.Builder
+	name.WriteString("Helivanta-")
+	separator := false
+	domainBytes := name.Len()
+	for _, char := range strings.TrimSpace(display) {
+		if !unicode.IsLetter(char) && !unicode.IsMark(char) && (char < '0' || char > '9') {
+			separator = name.Len() > len("Helivanta-")
+			continue
+		}
+		part := string(char)
+		if separator {
+			part = "-" + part
+		}
+		// Native default domains truncate at 63 bytes; keep suffixes before that boundary.
+		partDomainBytes := len(strings.ToLower(part))
+		if name.Len()+len(part) > 55 || domainBytes+partDomainBytes > 55 {
+			break
+		}
+		name.WriteString(part)
+		domainBytes += partDomainBytes
+		separator = false
+	}
+	if name.Len() == len("Helivanta-") {
+		name.WriteString("Workspace")
+	}
+	if ordinal > 1 {
+		name.WriteString("-" + strconv.Itoa(ordinal))
+	}
+	return name.String()
+}
+
+func (c *Client) organizationDomainTaken(ctx context.Context, name, expectedID string) (bool, error) {
+	var response struct {
+		Result []struct {
+			ID string `json:"id"`
+		} `json:"result"`
+	}
+	query := map[string]any{
+		"query": map[string]any{"limit": 2},
+		"queries": []map[string]any{{"domainQuery": map[string]string{
+			"domain": strings.ToLower(name + "." + c.host), "method": "TEXT_QUERY_METHOD_EQUALS",
+		}}},
+	}
+	if err := c.request(ctx, http.MethodPost, "/v2/organizations/_search", "", query, &response); err != nil {
+		return false, err
+	}
+	if len(response.Result) > 1 || (len(response.Result) == 1 && response.Result[0].ID == "") {
+		return false, errors.New("ambiguous native organization domain collision")
+	}
+	return len(response.Result) == 1 && response.Result[0].ID != expectedID, nil
 }
 
 func (c *Client) ensureHospitalLogin(ctx context.Context, orgID string) error {
