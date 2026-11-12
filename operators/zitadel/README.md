@@ -88,3 +88,9 @@ claims are runtime data and must never be committed to public GitOps. See
 branches, independent pharmacies/labs, shared users, safe adoption and retries.
 See [security assurance](docs/security-assurance.md) for SOC 2/HIPAA control
 coverage and the organizational evidence that code cannot establish.
+
+New Helivanta first-owner organizations use readable, provider-unique names such
+as `Helivanta-Yes-Hospital`, with numeric suffixes for confirmed collisions.
+Immutable tenant/org/owner IDs remain internal bindings. Existing organizations
+are preserved; see [ADR 0005](docs/adr/0005-readable-helivanta-organization-names.md)
+for retry bounds, default-domain behavior and rollout/rollback requirements.

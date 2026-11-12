@@ -234,8 +234,8 @@ func testFirstOwnerCreation(t *testing.T, lost, revoked, external bool, displayN
 				w.WriteHeader(500)
 				return
 			}
-			if !strings.HasPrefix(body.Name, "["+tenant+"] ") || len([]rune(body.Name)) > 200 {
-				t.Error("fresh native organization name must be tenant-unique")
+			if !strings.HasPrefix(body.Name, "Helivanta-") || strings.Contains(body.Name, tenant) || len(strings.ToLower(body.Name)) > 55 {
+				t.Error("fresh native organization name must be readable with room for a unique domain suffix")
 			}
 			admin := body.Admins[0]
 			if admin.UserID != "" || admin.Human["userId"] != userID || len(admin.Roles) != 1 || admin.Roles[0] != "ORG_OWNER" {
@@ -381,6 +381,6 @@ func TestExternalHelivantaEmailSuppressesSharedSMTPOnCreationAndReplay(t *testin
 	}
 }
 
-func TestFreshOwnerOrgNameKeepsTenantUUIDAheadOfNativeDomainTruncation(t *testing.T) {
+func TestFreshOwnerOrgNameLeavesRoomForUniqueNativeDomainSuffix(t *testing.T) {
 	testFirstOwnerCreation(t, false, false, false, "Hospital "+strings.Repeat("x", 191))
 }
