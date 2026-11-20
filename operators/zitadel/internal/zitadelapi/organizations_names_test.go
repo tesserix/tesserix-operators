@@ -41,6 +41,9 @@ func TestFreshHelivantaOrganizationHasReadableNameAndRecoversReplay(t *testing.T
 						return
 					}
 					_ = json.NewEncoder(w).Encode(map[string]string{"organizationId": "helivanta-" + spec.TenantID})
+				case "/management/v1/policies/notification":
+					// Already off: these tests are about readable names, not #33.
+					_, _ = fmt.Fprint(w, `{"policy":{"isDefault":false,"passwordChange":false}}`)
 				case "/v2/users/" + spec.InitialAdminUserID:
 					writeUnverifiedOwner(w, spec)
 				default:
@@ -144,6 +147,9 @@ func TestConcurrentSameNameSignupsKeepSeparateOrganizationsAndOwners(t *testing.
 			}
 			id := byDomain[body.Queries[0].DomainQuery.Domain]
 			_ = json.NewEncoder(w).Encode(map[string]any{"result": []map[string]string{{"id": id, "name": byID[id]}}})
+		case r.URL.Path == "/management/v1/policies/notification":
+			// Already off: these tests are about readable names, not #33.
+			_, _ = fmt.Fprint(w, `{"policy":{"isDefault":false,"passwordChange":false}}`)
 		case strings.HasPrefix(r.URL.Path, "/v2/users/"):
 			for _, spec := range specs {
 				if r.URL.Path == "/v2/users/"+spec.InitialAdminUserID {
@@ -253,6 +259,9 @@ func TestExistingTenantNamesArePreservedWithoutRecreationOrRename(t *testing.T) 
 				switch r.URL.Path {
 				case "/admin/v1/orgs/helivanta-" + spec.TenantID:
 					writeOrganization(w, "helivanta-"+spec.TenantID, name)
+				case "/management/v1/policies/notification":
+					// Already off: these tests are about readable names, not #33.
+					_, _ = fmt.Fprint(w, `{"policy":{"isDefault":false,"passwordChange":false}}`)
 				case "/v2/users/" + spec.InitialAdminUserID:
 					writeUnverifiedOwner(w, spec)
 				default:

@@ -119,8 +119,23 @@ func (c *Client) EnsureOrganization(ctx context.Context, spec identity.ZitadelOr
 	if found.Org.ID != id || !nameMatches || found.Org.State != "ORG_STATE_ACTIVE" {
 		return "", errors.New("organization name, state or identity does not match")
 	}
+	// The password-changed notice goes off as soon as the owner is proven to be
+	// ours, before the email-verification wait ends: in one-email signup the
+	// owner sets a password while still unverified, and Zitadel mails the
+	// notice at that moment. A foreign, disabled or unreadable owner still
+	// gets no write. Outside the preserveLoginPolicy gate: that flag keeps an
+	// adopted organisation's login posture for a staged MFA cutover, while
+	// which notifications Zitadel mails a Helivanta customer is a product
+	// choice that applies to adopted organisations too.
 	if spec.InitialAdmin != nil {
-		if err := c.verifyOrganizationAdministrator(ctx, spec, id); err != nil {
+		err := c.verifyOrganizationAdministrator(ctx, spec, id)
+		if err != nil && !errors.Is(err, ErrOwnerVerificationPending) {
+			return id, err
+		}
+		if notifyErr := c.ensureHospitalNotification(ctx, id); notifyErr != nil {
+			return "", notifyErr
+		}
+		if err != nil {
 			return id, err
 		}
 	}
@@ -160,12 +175,10 @@ func (c *Client) EnsureOrganization(ctx context.Context, spec identity.ZitadelOr
 			return "", err
 		}
 	}
-	// Outside the preserveLoginPolicy gate: that flag keeps an adopted
-	// organisation's login posture for a staged MFA cutover, while which
-	// notifications Zitadel mails a Helivanta customer is a product choice
-	// that applies to adopted organisations too.
-	if err = c.ensureHospitalNotification(ctx, id); err != nil {
-		return "", err
+	if spec.InitialAdmin == nil {
+		if err = c.ensureHospitalNotification(ctx, id); err != nil {
+			return "", err
+		}
 	}
 	ownerID, err := c.organizationID(ctx, owner)
 	if err != nil {

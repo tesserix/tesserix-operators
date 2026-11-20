@@ -211,6 +211,9 @@ func testFirstOwnerCreation(t *testing.T, lost, revoked, external bool, displayN
 	}
 	created, verified := false, false
 	creates, grants := 0, 0
+	// tesserix-operators#33: the password-changed notice must be off before
+	// the owner can set a password, which happens while still unverified.
+	notificationOffWhileUnverified := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/admin/v1/orgs/" + orgID:
@@ -295,8 +298,15 @@ func testFirstOwnerCreation(t *testing.T, lost, revoked, external bool, displayN
 		case "/admin/v1/orgs/" + orgID + "/policies/domain":
 			_, _ = fmt.Fprint(w, `{"policy":{"validateOrgDomains":true}}`)
 		case "/management/v1/policies/notification":
-			// Already off: these tests are about creation and adoption, not #33.
-			_, _ = fmt.Fprint(w, `{"policy":{"isDefault":false,"passwordChange":false}}`)
+			if r.Method == http.MethodGet {
+				// Inherited default, as a freshly created organisation has.
+				_, _ = fmt.Fprint(w, `{"policy":{"isDefault":true,"passwordChange":true}}`)
+				return
+			}
+			if !verified {
+				notificationOffWhileUnverified = true
+			}
+			_, _ = fmt.Fprint(w, `{}`)
 		case "/management/v1/policies/login":
 			_, _ = fmt.Fprint(w, `{"policy":{"forceMfa":true,"ignoreUnknownUsernames":true}}`)
 		case "/management/v1/projectgrants/_search":
@@ -319,6 +329,9 @@ func testFirstOwnerCreation(t *testing.T, lost, revoked, external bool, displayN
 		if err == nil || !created || grants != 0 {
 			t.Fatalf("must create exactly one unverified owner without product access: created=%v grants=%d err=%v", created, grants, err)
 		}
+	}
+	if !revoked && !notificationOffWhileUnverified {
+		t.Fatal("password-changed notice was still on while the owner could set a password")
 	}
 	verified = true
 	got, err := c.EnsureOrganization(t.Context(), spec, "TESSERIX", "project")
