@@ -160,6 +160,13 @@ func (c *Client) EnsureOrganization(ctx context.Context, spec identity.ZitadelOr
 			return "", err
 		}
 	}
+	// Outside the preserveLoginPolicy gate: that flag keeps an adopted
+	// organisation's login posture for a staged MFA cutover, while which
+	// notifications Zitadel mails a Helivanta customer is a product choice
+	// that applies to adopted organisations too.
+	if err = c.ensureHospitalNotification(ctx, id); err != nil {
+		return "", err
+	}
 	ownerID, err := c.organizationID(ctx, owner)
 	if err != nil {
 		return "", err
@@ -302,6 +309,34 @@ func (c *Client) ensureHospitalLogin(ctx context.Context, orgID string) error {
 		policy["multiFactors"] = current.Policy["multiFactors"]
 	}
 	return c.request(ctx, method, "/management/v1/policies/login", orgID, policy, nil)
+}
+
+// ensureHospitalNotification turns off Zitadel's own password-changed email
+// for the organisation (tesserix-operators#33). Helivanta customers must see
+// Helivanta's mail only: the instance default is Tesserix-branded and its
+// button opens the hosted login. Same read-compare-write shape as the login
+// policy, so a reconcile with nothing to change writes nothing.
+func (c *Client) ensureHospitalNotification(ctx context.Context, orgID string) error {
+	var current struct {
+		Policy *struct {
+			IsDefault      bool `json:"isDefault"`
+			PasswordChange bool `json:"passwordChange"`
+		} `json:"policy"`
+	}
+	if err := c.request(ctx, http.MethodGet, "/management/v1/policies/notification", orgID, nil, &current); err != nil {
+		return err
+	}
+	if current.Policy == nil {
+		return errors.New("hospital notification policy is missing")
+	}
+	if !current.Policy.IsDefault && !current.Policy.PasswordChange {
+		return nil
+	}
+	method := http.MethodPut
+	if current.Policy.IsDefault {
+		method = http.MethodPost
+	}
+	return c.request(ctx, method, "/management/v1/policies/notification", orgID, map[string]any{"passwordChange": false}, nil)
 }
 
 func (c *Client) ensureHospitalDomainPolicy(ctx context.Context, orgID string) error {

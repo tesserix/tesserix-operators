@@ -41,6 +41,9 @@ func TestOrganizationAdoptionChecksTenantBeforeAnyMutation(t *testing.T) {
 				case "/admin/v1/orgs/hospital/policies/domain":
 					domainChecked = true
 					_, _ = fmt.Fprint(w, `{"policy":{"validateOrgDomains":true}}`)
+				case "/management/v1/policies/notification":
+					// Already off: these tests are about creation and adoption, not #33.
+					_, _ = fmt.Fprint(w, `{"policy":{"isDefault":false,"passwordChange":false}}`)
 				case "/management/v1/policies/login":
 					if r.Method == "GET" {
 						_ = json.NewEncoder(w).Encode(map[string]any{"isDefault": true, "policy": map[string]any{"allowUsernamePassword": true, "allowRegister": true, "allowExternalIdp": true, "secondFactors": []string{"SECOND_FACTOR_TYPE_OTP"}, "passwordCheckLifetime": reauthLifetime}})
@@ -129,6 +132,9 @@ func TestNewOrganizationRecoversLostCreateResponseWithoutDuplicatingOwner(t *tes
 			_, _ = fmt.Fprint(w, `{"project":{"id":"project","details":{"resourceOwner":"owner"}}}`)
 		case "/admin/v1/orgs/" + id + "/policies/domain":
 			_, _ = fmt.Fprint(w, `{"policy":{"validateOrgDomains":true}}`)
+		case "/management/v1/policies/notification":
+			// Already off: these tests are about creation and adoption, not #33.
+			_, _ = fmt.Fprint(w, `{"policy":{"isDefault":false,"passwordChange":false}}`)
 		case "/management/v1/policies/login":
 			_, _ = fmt.Fprint(w, `{"policy":{"forceMfa":true,"ignoreUnknownUsernames":true}}`)
 		case "/management/v1/projectgrants/_search":
@@ -288,6 +294,9 @@ func testFirstOwnerCreation(t *testing.T, lost, revoked, external bool, displayN
 			_, _ = fmt.Fprint(w, `{"project":{"id":"project","details":{"resourceOwner":"platform"}}}`)
 		case "/admin/v1/orgs/" + orgID + "/policies/domain":
 			_, _ = fmt.Fprint(w, `{"policy":{"validateOrgDomains":true}}`)
+		case "/management/v1/policies/notification":
+			// Already off: these tests are about creation and adoption, not #33.
+			_, _ = fmt.Fprint(w, `{"policy":{"isDefault":false,"passwordChange":false}}`)
 		case "/management/v1/policies/login":
 			_, _ = fmt.Fprint(w, `{"policy":{"forceMfa":true,"ignoreUnknownUsernames":true}}`)
 		case "/management/v1/projectgrants/_search":
