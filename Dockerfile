@@ -41,7 +41,10 @@ USER 65532:65532
 ENTRYPOINT ["/evals-onboarding-operator"]
 
 FROM postgres:14-alpine@sha256:50fce0c9c54c43d8b02ce16cb9daff75eb94c09c4ee3d41c157852ebd9700c80 AS openpanel-project-init
+# libxml2 floor: CVE-2026-86144 is fixed in 2.13.9-r3. Naming it changes this
+# layer, so a cached upgrade cannot ship the vulnerable build, and the build
+# fails rather than continuing if the fixed package is unavailable.
 RUN apk upgrade --no-cache \
-    && apk add --no-cache argon2 nodejs kubectl \
+    && apk add --no-cache argon2 nodejs kubectl 'libxml2>=2.13.9-r3' \
     && rm -f /usr/local/bin/gosu
 USER 65532:65532
