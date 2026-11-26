@@ -13,12 +13,40 @@ func TestStrictHospitalPolicyWithOmittedProtobufDefaultsDoesNotWrite(t *testing.
 		if r.Method != "GET" {
 			t.Errorf("strict policy drifted on omitted defaults: %s", r.Method)
 		}
-		_, _ = fmt.Fprint(w, `{"policy":{"forceMfa":true,"ignoreUnknownUsernames":true}}`)
+		_, _ = fmt.Fprint(w, `{"policy":{"forceMfa":true,"ignoreUnknownUsernames":true,"hidePasswordReset":true}}`)
 	}))
 	defer server.Close()
 	c, _ := NewClient(server.URL, "auth.tesserix.app", func() (string, error) { return "token", nil })
 	if e := c.ensureHospitalLogin(t.Context(), "org"); e != nil {
 		t.Fatal(e)
+	}
+}
+
+// helivanta#1859: a Helivanta organisation hides Zitadel's hosted password
+// reset, so its Tesserix-branded reset mail cannot be requested; the other
+// strict settings and the existing policy fields are kept.
+func TestHospitalLoginHidesHostedPasswordReset(t *testing.T) {
+	var written map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			_, _ = fmt.Fprint(w, `{"policy":{"forceMfa":true,"ignoreUnknownUsernames":true,"hidePasswordReset":false,"allowExternalIdp":true}}`)
+			return
+		}
+		if r.Method != http.MethodPut || written != nil {
+			t.Errorf("want one PUT, got %s", r.Method)
+		}
+		if e := json.NewDecoder(r.Body).Decode(&written); e != nil {
+			t.Fatal(e)
+		}
+		_, _ = fmt.Fprint(w, `{}`)
+	}))
+	defer server.Close()
+	c, _ := NewClient(server.URL, "auth.tesserix.app", func() (string, error) { return "token", nil })
+	if e := c.ensureHospitalLogin(t.Context(), "org"); e != nil {
+		t.Fatal(e)
+	}
+	if written["hidePasswordReset"] != true || written["forceMfa"] != true || written["allowExternalIdp"] != true {
+		t.Fatalf("hosted reset left visible or policy lost: %v", written)
 	}
 }
 

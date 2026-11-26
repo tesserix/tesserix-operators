@@ -282,7 +282,10 @@ func (c *Client) ensureHospitalLogin(ctx context.Context, orgID string) error {
 			policy[key] = v
 		}
 	}
-	wanted := map[string]any{"forceMfa": true, "allowRegister": false, "allowDomainDiscovery": false, "forceMfaLocalOnly": false, "ignoreUnknownUsernames": true, "mfaInitSkipLifetime": "0s"}
+	// hidePasswordReset (helivanta#1859): Helivanta resets passwords on its own
+	// page with its own mail; Zitadel's hosted reset would send a
+	// Tesserix-branded mail from its own page instead.
+	wanted := map[string]any{"forceMfa": true, "allowRegister": false, "allowDomainDiscovery": false, "forceMfaLocalOnly": false, "ignoreUnknownUsernames": true, "mfaInitSkipLifetime": "0s", "hidePasswordReset": true}
 	dirty := current.IsDefault || current.Policy["isDefault"] == true
 	for key, value := range wanted {
 		actual := policy[key]
